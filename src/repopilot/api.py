@@ -1,6 +1,7 @@
 """Local FastAPI application for the evidence-grounded RepoPilot workflow."""
 
 import json
+from contextlib import asynccontextmanager
 from dataclasses import asdict
 from pathlib import Path
 
@@ -20,11 +21,18 @@ def create_app(repo: str | Path):
         raise RuntimeError("Install the API extra: pip install -e '.[api]'") from error
 
     root = Path(repo).resolve()
-    app = FastAPI(title="RepoPilot", description="Evidence-grounded repository engineering agent", version="0.4.0")
+    conversations = ConversationStore(root / ".repopilot" / "conversations.sqlite3")
+
+    @asynccontextmanager
+    async def lifespan(_app):
+        yield
+        conversations.close()
+
+    app = FastAPI(title="RepoPilot", description="Evidence-grounded repository engineering agent",
+                  version="0.5.0", lifespan=lifespan)
     app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:8000", "http://127.0.0.1:8000"],
                        allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
     active: dict[str, tuple[RepoPilot, TaskState]] = {}
-    conversations = ConversationStore()
     catalog = RepositoryCatalog(root)
     runtime = {"root": root, "rag_assistant": CodeRagAssistant(root, conversations=conversations),
                "repository": catalog.register(root, label=root.name, source="local")}
@@ -48,6 +56,9 @@ def create_app(repo: str | Path):
 
     class GitHubImportRequest(BaseModel):
         github_url: str = Field(min_length=20, max_length=500)
+
+    class ConversationRequest(BaseModel):
+        title: str = Field(default="新对话", min_length=1, max_length=100)
 
     def select_repository(info):
         runtime["root"] = Path(info.root)
@@ -76,6 +87,10 @@ def create_app(repo: str | Path):
         active[task_id] = (pilot, state)
         return pilot, state
 
+    def require_current_conversation(conversation_id: str | None) -> None:
+        if conversation_id and not conversations.owns(conversation_id, str(runtime["root"])):
+            raise HTTPException(status_code=404, detail="conversation not found in current repository")
+
     @app.get("/")
     def dashboard():
         return FileResponse(web_root / "index.html")
@@ -88,6 +103,33 @@ def create_app(repo: str | Path):
     def list_tools():
         registry = create_registry(RepoPilot(runtime["root"]))
         return {"tools": [{"name": tool.name, "risk": tool.risk} for tool in registry._tools.values()]}
+
+    @app.get("/api/chat/tools")
+    def list_chat_tools():
+        return {"tools": runtime["rag_assistant"].tool_registry.definitions()}
+
+    @app.get("/api/conversations")
+    def list_conversations():
+        return {"conversations": conversations.list(str(runtime["root"]))}
+
+    @app.post("/api/conversations")
+    def create_conversation(request: ConversationRequest):
+        conversation_id = conversations.create(str(runtime["root"]), request.title)
+        return {"conversation_id": conversation_id, "title": request.title}
+
+    @app.get("/api/conversations/{conversation_id}")
+    def get_conversation(conversation_id: str):
+        try:
+            return {"conversation_id": conversation_id,
+                    "messages": conversations.messages(conversation_id, str(runtime["root"]))}
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail="conversation not found") from error
+
+    @app.delete("/api/conversations/{conversation_id}")
+    def delete_conversation(conversation_id: str):
+        if not conversations.delete(conversation_id, str(runtime["root"])):
+            raise HTTPException(status_code=404, detail="conversation not found")
+        return {"deleted": True, "conversation_id": conversation_id}
 
     @app.get("/api/repository")
     def repository_info():
@@ -119,11 +161,13 @@ def create_app(repo: str | Path):
     @app.post("/api/chat")
     def chat(request: ChatRequest):
         """Read-only code RAG chat. It never creates or applies a patch."""
+        require_current_conversation(request.conversation_id)
         return CodeRagAssistant.view(runtime["rag_assistant"].ask(request.message, request.conversation_id, request.top_k))
 
     @app.post("/api/chat/stream")
     def chat_stream(request: ChatRequest):
         """SSE delivery for tool events and model answer deltas."""
+        require_current_conversation(request.conversation_id)
         def stream():
             for event, payload in runtime["rag_assistant"].stream(request.message, request.conversation_id, request.top_k):
                 yield f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"

@@ -9,6 +9,9 @@
 ```mermaid
 flowchart LR
     UI["本地仪表盘 / CLI"] --> API["FastAPI + SSE"]
+    API --> CHAT["Code Tool Registry"]
+    CHAT --> CHATDB["SQLite conversations"]
+    CHAT --> RET
     API --> ORCH["Task Orchestrator"]
     ORCH --> RET["AST-aware retrieval"]
     RET --> EVID["EvidenceStore + SQLite"]
@@ -25,8 +28,10 @@ flowchart LR
 - 明确的任务状态机：计划、检索、执行、待审批、隔离应用、验证、审查、完成/取消。
 - SQLite 检查点：任务、证据、补丁建议和事件轨迹都可恢复。
 - 人工审批门：补丁只会在 Git worktree 或隔离副本中应用。
-- 本地仪表盘：可查看计划、代码证据、Diff、测试输出与审查结论。
-- 真实 MCP Server：向外部 Agent 暴露受限的代码搜索、文件读取和 pytest 工具。
+- 本地仪表盘：可查看计划、代码证据、Diff、测试输出、审查结论，以及 Code RAG 的逐步执行轨迹。
+- 按仓库隔离的 SQLite 对话历史：支持新建、恢复和删除多轮会话，回答引用随历史持久化。
+- 统一 Code Tool Registry：6 个具备输入 Schema、只读风险标记、执行耗时和真实输出的工具。
+- 真实 MCP Server：向外部 Agent 暴露基础仓库工具，以及代码问答、摘要、依赖、测试建议和安全扫描工具。
 - 三个可复现的受控 Bug 演示；默认不依赖 API Key 或大模型。
 
 ## 快速开始
@@ -61,7 +66,7 @@ python -m repopilot.cli ./demo/cases/pagination_off_by_one "第一页漏掉第�
 
 仪表盘顶部提供只读的 Code RAG Copilot：它会识别代码问答、函数摘要、依赖定位、测试建议和安全扫描等意图，自动路由到对应只读工具；再通过 AST/BM25 与可选 Embedding 的混合检索定位代码，并把文件、行号和检索通道显示为引用。它支持追问改写、多轮上下文和流式回答。配置已有的 `REPOPILOT_MODEL_*` 环境变量后，会调用 OpenAI-compatible `/chat/completions` 生成严格基于检索证据的回答；未配置或模型异常时自动回退到离线证据回答。
 
-聊天接口为 `POST /api/chat`，流式接口为 `POST /api/chat/stream`；传入 `message`、可选 `conversation_id` 和 `top_k`。响应包含回答、引用、模型提供方、回退标记、意图、工具路由和 Agent 轨迹。该接口始终只读，不能创建、批准或应用补丁。
+聊天接口为 `POST /api/chat`，流式接口为 `POST /api/chat/stream`；传入 `message`、可选 `conversation_id` 和 `top_k`。响应包含回答、引用、模型提供方、回退标记、意图、工具路由和 Agent 轨迹。`/api/conversations` 提供按当前仓库隔离的持久化历史，`/api/chat/tools` 提供工具 Schema。该接口始终只读，不能创建、批准或应用补丁。
 
 仪表盘还支持隔离导入公开 GitHub 仓库或 ZIP：GitHub 仅接受 `https://github.com/owner/repo`，ZIP 会限制大小、文件数、解压大小，并拦截路径穿越。导入后可浏览文件树，点击聊天引用预览源代码；导入副本不会覆盖本地仓库。
 
@@ -87,7 +92,7 @@ $env:REPOPILOT_REPO_PATH = "C:/path/to/python-repo"
 python -m repopilot.mcp_server.server
 ```
 
-它使用 stdio，提供 `search_code`、`read_file`、`run_tests` 三个受限工具。补丁写入能力不会通过 MCP 暴露，必须经由人工审批 API。
+它使用 stdio，提供 `search_code`、`read_file`、`run_tests`，以及 `ask_code`、`summarize_code`、`locate_code_dependencies`、`suggest_code_tests`、`scan_code_safety`。Code RAG 工具返回回答、引用和完整执行轨迹；补丁写入能力不会通过 MCP 暴露，必须经由人工审批 API。
 
 ## 演示与边界
 
@@ -100,6 +105,8 @@ python -m repopilot.mcp_server.server
 当前版本仅分析 Python，并且只对三个受控案例给出确定性补丁；其他问题只生成证据，不会臆造修改。配置 `REPOPILOT_MODEL_*` 后，Planner 会使用 OpenAI-compatible `/chat/completions` 输出结构化计划；配置 `REPOPILOT_EMBEDDING_*` 后，检索会融合 `/embeddings` 语义排序。网络或模型异常时会自动回退到离线计划和词法检索。运行 `python scripts/run_controlled_eval.py` 可生成三案例评估结果。详见 [架构说明](docs/ARCHITECTURE.md)、[MCP 使用说明](docs/MCP.md) 和 [限制说明](docs/LIMITATIONS.md)。
 
 每次推送与面向 `main` 的 Pull Request 都会自动执行单元/API 测试和三案例的受控评估；评估报告必须可重复生成且没有差异。
+
+项目采用 [MIT License](LICENSE)。
 
 ## 作品集材料
 

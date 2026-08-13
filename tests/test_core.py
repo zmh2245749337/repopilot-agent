@@ -24,6 +24,17 @@ class RepoPilotTests(unittest.TestCase):
         self.assertEqual(index.build(), 2)
         self.assertEqual(index.search("list_orders 分页")[0][1].symbol, "list_orders")
 
+    def test_exact_symbol_name_outranks_call_sites(self):
+        (self.root / "service.py").write_text(
+            "class OrderService:\n    def list_orders(self):\n        return []\n", encoding="utf-8"
+        )
+        (self.root / "test_service.py").write_text(
+            "def test_orders():\n    assert OrderService().list_orders() == []\n", encoding="utf-8"
+        )
+        index = CodeIndex(self.root)
+        index.build()
+        self.assertEqual(index.search("Where is OrderService implemented?")[0][1].symbol, "OrderService")
+
     def test_workflow_records_evidence_and_checkpoint(self):
         pilot = RepoPilot(self.root)
         state = pilot.analyze("list_orders offset 分页错误")

@@ -22,5 +22,14 @@
     "expected_symbol": "resolve_download_path",
     "expected_intent": "safety_review",
     "expected_tool": "scan_safety"
+  },
+  {
+    "case": "self_repository",
+    "repository": ".",
+    "query": "Where is CodeToolRegistry implemented?",
+    "expected_path": "src/repopilot/chat.py",
+    "expected_symbol": "CodeToolRegistry",
+    "expected_intent": "code_location",
+    "expected_tool": "search_code"
   }
 ]

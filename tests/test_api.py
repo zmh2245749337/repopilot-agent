@@ -20,9 +20,11 @@ class ApiWorkflowTests(unittest.TestCase):
         tests.mkdir()
         (tests / "test_orders.py").write_text(
             "from orders import list_orders\n\ndef test_first_page():\n    assert list_orders(1, 10) == 0\n", encoding="utf-8")
-        self.client = TestClient(create_app(self.root))
+        self.client_context = TestClient(create_app(self.root))
+        self.client = self.client_context.__enter__()
 
     def tearDown(self):
+        self.client_context.__exit__(None, None, None)
         self.tmp.cleanup()
 
     def test_dashboard_and_approved_workflow(self):
@@ -62,6 +64,26 @@ class ApiWorkflowTests(unittest.TestCase):
         self.assertIn("event: meta", response.text)
         self.assertIn("event: answer.delta", response.text)
         self.assertIn("event: complete", response.text)
+
+    def test_conversation_history_and_tool_catalog_are_repository_scoped(self):
+        tools = self.client.get("/api/chat/tools")
+        self.assertEqual(tools.status_code, 200)
+        self.assertEqual(len(tools.json()["tools"]), 6)
+
+        created = self.client.post("/api/conversations", json={"title": "分页排查"}).json()
+        conversation_id = created["conversation_id"]
+        chat = self.client.post("/api/chat", json={"message": "Where is list_orders?",
+                                                    "conversation_id": conversation_id})
+        self.assertEqual(chat.status_code, 200)
+        history = self.client.get(f"/api/conversations/{conversation_id}").json()["messages"]
+        self.assertEqual([message["role"] for message in history], ["user", "assistant"])
+        self.assertTrue(history[1]["citations"])
+        listed = self.client.get("/api/conversations").json()["conversations"]
+        self.assertEqual(listed[0]["message_count"], 2)
+        self.assertEqual(self.client.delete(f"/api/conversations/{conversation_id}").status_code, 200)
+        self.assertEqual(self.client.get(f"/api/conversations/{conversation_id}").status_code, 404)
+        self.assertEqual(self.client.post("/api/chat", json={"message": "Where is list_orders?",
+                                                             "conversation_id": conversation_id}).status_code, 404)
 
     def test_zip_import_switches_the_active_read_only_repository(self):
         archive = io.BytesIO()

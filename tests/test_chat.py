@@ -63,5 +63,25 @@ class CodeRagAssistantTests(unittest.TestCase):
         assistant = CodeRagAssistant(self.root)
         events = list(assistant.stream("Where is list_orders?"))
         self.assertEqual(events[0][0], "meta")
+        self.assertEqual(events[0][1]["tool_result"]["name"], "search_code")
+        self.assertIn("tool.completed", [step["event"] for step in events[0][1]["trace"]])
         self.assertTrue(any(event == "answer.delta" for event, _ in events))
         self.assertEqual(events[-1][0], "complete")
+        self.assertEqual(events[-1][1]["tool_result"]["name"], "search_code")
+
+    def test_tool_registry_exposes_six_typed_read_only_tools(self):
+        assistant = CodeRagAssistant(self.root)
+        definitions = assistant.tool_registry.definitions()
+        self.assertEqual(len(definitions), 6)
+        self.assertTrue(all(tool["risk"] == "read-only" for tool in definitions))
+        self.assertIn("scan_safety", {tool["name"] for tool in definitions})
+
+    def test_sqlite_conversations_survive_store_restart(self):
+        database = self.root / ".repopilot" / "chat.sqlite3"
+        first_store = ConversationStore(database)
+        answer = CodeRagAssistant(self.root, conversations=first_store).ask("Where is list_orders?")
+        first_store.close()
+        second_store = ConversationStore(database)
+        self.assertEqual(second_store.list(str(self.root))[0]["message_count"], 2)
+        self.assertEqual(second_store.messages(answer.conversation_id, str(self.root))[0]["role"], "user")
+        second_store.close()

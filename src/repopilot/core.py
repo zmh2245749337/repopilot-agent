@@ -87,7 +87,10 @@ class CodeIndex:
                     idf = math.log(1 + (len(self.chunks) - document_frequency[token] + 0.5) / (document_frequency[token] + 0.5))
                     lexical += idf * frequency * 2.2 / (frequency + 1.2 * (1 - 0.75 + 0.75 * len(document) / max(1, average_length)))
             symbol_bonus = len(set(query_tokens) & tokens(chunk.symbol + " " + chunk.path)) / max(1, len(set(query_tokens)))
-            score = lexical + 1.5 * symbol_bonus
+            # Exact symbol mentions should outrank short tests that merely call
+            # the symbol. This remains deterministic and easy to audit.
+            exact_symbol_bonus = 6.0 if chunk.symbol.lower() in set(query_tokens) else 0.0
+            score = lexical + 1.5 * symbol_bonus + exact_symbol_bonus
             if score:
                 ranked.append((score, chunk))
         return sorted(ranked, key=lambda item: (-item[0], item[1].path, item[1].start_line))[:top_k]

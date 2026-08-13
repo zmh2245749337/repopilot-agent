@@ -16,13 +16,16 @@ def main() -> None:
     cases = json.loads((ROOT / "eval" / "rag_cases.json").read_text(encoding="utf-8"))
     results = []
     for case in cases:
-        answer = CodeRagAssistant(ROOT / "demo" / "cases" / case["case"]).ask(case["query"])
+        repository = ROOT if case.get("repository") == "." else ROOT / "demo" / "cases" / case["case"]
+        answer = CodeRagAssistant(repository).ask(case["query"])
         paths = [citation.path for citation in answer.citations]
         symbols = [citation.symbol for citation in answer.citations]
         results.append({
             "case": case["case"],
             "source_hit": case["expected_path"] in paths,
             "symbol_hit": case["expected_symbol"] in symbols,
+            "top1_hit": bool(paths and symbols and paths[0] == case["expected_path"]
+                              and symbols[0] == case["expected_symbol"]),
             "intent_hit": answer.intent == case["expected_intent"],
             "tool_hit": answer.tool == case["expected_tool"],
             "citations": paths,
@@ -30,7 +33,8 @@ def main() -> None:
     output = ROOT / "reports" / "rag_eval.json"
     output.write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
     print(output)
-    if not all(all(item[key] for key in ("source_hit", "symbol_hit", "intent_hit", "tool_hit")) for item in results):
+    if not all(all(item[key] for key in ("source_hit", "symbol_hit", "top1_hit", "intent_hit", "tool_hit"))
+               for item in results):
         raise SystemExit("RAG evaluation failed; inspect reports/rag_eval.json")
 
 
