@@ -108,6 +108,10 @@ def create_app(repo: str | Path):
     def list_chat_tools():
         return {"tools": runtime["rag_assistant"].tool_registry.definitions()}
 
+    @app.get("/api/model")
+    def model_status():
+        return runtime["rag_assistant"].model_status()
+
     @app.get("/api/conversations")
     def list_conversations():
         return {"conversations": conversations.list(str(runtime["root"]))}

@@ -39,7 +39,7 @@ flowchart LR
 - **后端框架：** FastAPI + Uvicorn
 - **代码解析：** Python AST
 - **混合检索：** BM25 + 精确符号加权 + 可选 Embedding / RRF
-- **LLM：** OpenAI-compatible Chat Completions（可选）+ 离线证据回退
+- **LLM：** 智谱 GLM-4.7-Flash（OpenAI-compatible）+ 离线证据回退
 - **Agent 编排：** Intent Routing + Code Tool Registry + SSE 流式事件
 - **数据存储：** SQLite
 - **协议：** Model Context Protocol（MCP / stdio）
@@ -78,6 +78,15 @@ python -m repopilot.cli ./demo/cases/pagination_off_by_one "第一页漏掉第�
 ## Code RAG Copilot
 
 仪表盘顶部提供只读的 Code RAG Copilot：它会识别代码问答、函数摘要、依赖定位、测试建议和安全扫描等意图，自动路由到对应只读工具；再通过 AST/BM25 与可选 Embedding 的混合检索定位代码，并把文件、行号和检索通道显示为引用。它支持追问改写、多轮上下文和流式回答。配置已有的 `REPOPILOT_MODEL_*` 环境变量后，会调用 OpenAI-compatible `/chat/completions` 生成严格基于检索证据的回答；未配置或模型异常时自动回退到离线证据回答。
+
+参考模型已经使用智谱 `glm-4.7-flash` 完成真实连通测试。首次使用时运行安全配置脚本；输入内容会被隐藏，Key 只保存在本机用户环境变量中，不进入仓库：
+
+```powershell
+& .\scripts\configure_zhipu.ps1
+python scripts/run_model_smoke.py
+```
+
+Smoke Test 只发送一次非流式合成测试语句，不会上传仓库代码或持续消耗免费模型额度。产品问答仍使用 SSE 流式接口；启动服务后，界面模型标签会依次显示 `configured`、真实调用成功后的 `online`，或限流/异常回退时的 `fallback`。
 
 聊天接口为 `POST /api/chat`，流式接口为 `POST /api/chat/stream`；传入 `message`、可选 `conversation_id` 和 `top_k`。响应包含回答、引用、模型提供方、回退标记、意图、工具路由和 Agent 轨迹。`/api/conversations` 提供按当前仓库隔离的持久化历史，`/api/chat/tools` 提供工具 Schema。该接口始终只读，不能创建、批准或应用补丁。
 
