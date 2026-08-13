@@ -34,7 +34,8 @@ flowchart LR
 
 - Python AST 索引、BM25 词法检索，以及可选 OpenAI-compatible Embedding 的 RRF 融合检索。
 - 离线确定性 Planner；也可配置 OpenAI-compatible 服务生成结构化计划，异常时自动回退。
-- Code RAG Copilot：支持多轮只读代码对话、意图识别、混合检索、文件行号引用和 Agent 轨迹；可选模型回答严格受检索证据约束。
+- Code RAG Copilot：支持追问改写、流式回答、代码问答/函数摘要/依赖定位/测试建议/安全扫描工具路由、混合检索、文件行号引用和 Agent 轨迹；可选模型回答严格受检索证据约束。
+- 隔离仓库导入与 Explorer：可导入受限的公开 GitHub URL 或安全检查后的 ZIP，在文件树中查看代码；引用可直接打开对应文件预览。
 - FastAPI 本地仪表盘、CLI 和 stdio MCP Server 三种使用入口。
 - 限制性 MCP 工具：仅暴露代码搜索、读取文件与 pytest；不暴露补丁写入。
 - SQLite 检查点和事件轨迹，可恢复任务状态与证据。
@@ -42,7 +43,7 @@ flowchart LR
 
 ## 可信度证据
 
-项目内置 3 个受控 Bug 案例：分页 off-by-one、可选字段异常和路径穿越。当前评估结果为 3/3 完成：每个案例均记录到“修复前测试失败、隔离修复后同一测试通过、Reviewer 批准”。详细机器可读结果见 [controlled_eval.json](../reports/controlled_eval.json)。
+项目内置 3 个受控 Bug 案例：分页 off-by-one、可选字段异常和路径穿越。当前修复评估为 3/3 完成：每个案例均记录到“修复前测试失败、隔离修复后同一测试通过、Reviewer 批准”。Code RAG 评估也覆盖这 3 个场景，并检查来源、符号、意图和工具路由均命中。详细机器可读结果见 [controlled_eval.json](../reports/controlled_eval.json) 与 [rag_eval.json](../reports/rag_eval.json)。
 
 本地回归包含 13 个测试和 3 个参数化子场景；GitHub Actions 会在推送和 Pull Request 时自动运行测试、受控评估及报告可重复性检查。
 

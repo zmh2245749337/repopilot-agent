@@ -1,0 +1,37 @@
+[
+  {
+    "case": "pagination_off_by_one",
+    "source_hit": true,
+    "symbol_hit": true,
+    "intent_hit": true,
+    "tool_hit": true,
+    "citations": [
+      "orders.py",
+      "tests/test_orders.py"
+    ]
+  },
+  {
+    "case": "optional_field_500",
+    "source_hit": true,
+    "symbol_hit": true,
+    "intent_hit": true,
+    "tool_hit": true,
+    "citations": [
+      "tests/test_orders.py",
+      "tests/test_orders.py",
+      "orders.py"
+    ]
+  },
+  {
+    "case": "path_traversal",
+    "source_hit": true,
+    "symbol_hit": true,
+    "intent_hit": true,
+    "tool_hit": true,
+    "citations": [
+      "downloads.py",
+      "tests/test_downloads.py",
+      "tests/test_downloads.py"
+    ]
+  }
+]

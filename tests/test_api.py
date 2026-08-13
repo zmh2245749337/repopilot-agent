@@ -1,6 +1,8 @@
 import importlib.util
+import io
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
 
@@ -53,3 +55,22 @@ class ApiWorkflowTests(unittest.TestCase):
         self.assertEqual(payload["provider"], "offline-evidence")
         self.assertEqual(payload["citations"][0]["path"], "orders.py")
         self.assertIn("answer.generated", [event["event"] for event in payload["trace"]])
+
+    def test_code_rag_stream_exposes_agent_events_and_answer_deltas(self):
+        response = self.client.post("/api/chat/stream", json={"message": "Where is list_orders?"})
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("event: meta", response.text)
+        self.assertIn("event: answer.delta", response.text)
+        self.assertIn("event: complete", response.text)
+
+    def test_zip_import_switches_the_active_read_only_repository(self):
+        archive = io.BytesIO()
+        with zipfile.ZipFile(archive, "w") as bundle:
+            bundle.writestr("uploaded/catalog.py", "def product_title():\n    return 'RepoPilot'\n")
+        response = self.client.post("/api/repositories/import/zip", files={"file": ("catalog.zip", archive.getvalue(), "application/zip")})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["repository"]["source"], "zip")
+        self.assertIn("catalog.py", response.json()["files"])
+        preview = self.client.get("/api/repository/file", params={"path": "catalog.py"})
+        self.assertEqual(preview.status_code, 200)
+        self.assertIn("product_title", preview.json()["content"])

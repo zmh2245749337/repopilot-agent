@@ -59,9 +59,11 @@ python -m repopilot.cli ./demo/cases/pagination_off_by_one "第一页漏掉第�
 
 ## Code RAG Copilot
 
-仪表盘顶部提供只读的 Code RAG Copilot：它会先识别提问类型，再通过 AST/BM25 与可选 Embedding 的混合检索定位代码，并把文件、行号和检索通道显示为引用。配置已有的 `REPOPILOT_MODEL_*` 环境变量后，它会调用 OpenAI-compatible `/chat/completions` 生成严格基于检索证据的回答；未配置或模型异常时自动回退到离线证据回答。
+仪表盘顶部提供只读的 Code RAG Copilot：它会识别代码问答、函数摘要、依赖定位、测试建议和安全扫描等意图，自动路由到对应只读工具；再通过 AST/BM25 与可选 Embedding 的混合检索定位代码，并把文件、行号和检索通道显示为引用。它支持追问改写、多轮上下文和流式回答。配置已有的 `REPOPILOT_MODEL_*` 环境变量后，会调用 OpenAI-compatible `/chat/completions` 生成严格基于检索证据的回答；未配置或模型异常时自动回退到离线证据回答。
 
-聊天接口为 `POST /api/chat`，传入 `message`、可选 `conversation_id` 和 `top_k`；响应包含回答、引用、模型提供方、回退标记和 Agent 轨迹。该接口始终只读，不能创建、批准或应用补丁。
+聊天接口为 `POST /api/chat`，流式接口为 `POST /api/chat/stream`；传入 `message`、可选 `conversation_id` 和 `top_k`。响应包含回答、引用、模型提供方、回退标记、意图、工具路由和 Agent 轨迹。该接口始终只读，不能创建、批准或应用补丁。
+
+仪表盘还支持隔离导入公开 GitHub 仓库或 ZIP：GitHub 仅接受 `https://github.com/owner/repo`，ZIP 会限制大小、文件数、解压大小，并拦截路径穿越。导入后可浏览文件树，点击聊天引用预览源代码；导入副本不会覆盖本地仓库。
 
 详细设计与配置见 [Code RAG 说明](docs/CODE_RAG.md)。
 

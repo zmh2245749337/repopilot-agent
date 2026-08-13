@@ -6,12 +6,13 @@ from pathlib import Path
 
 from .chat import CodeRagAssistant, ConversationStore
 from .core import RepoPilot, TaskState
+from .repository import RepositoryCatalog, RepositoryImportError
 from .tools import create_registry
 
 
 def create_app(repo: str | Path):
     try:
-        from fastapi import FastAPI, HTTPException
+        from fastapi import FastAPI, File, HTTPException, UploadFile
         from fastapi.middleware.cors import CORSMiddleware
         from fastapi.responses import FileResponse, StreamingResponse
         from pydantic import BaseModel, Field
@@ -19,12 +20,14 @@ def create_app(repo: str | Path):
         raise RuntimeError("Install the API extra: pip install -e '.[api]'") from error
 
     root = Path(repo).resolve()
-    app = FastAPI(title="RepoPilot", description="Evidence-grounded repository engineering agent", version="0.3.0")
+    app = FastAPI(title="RepoPilot", description="Evidence-grounded repository engineering agent", version="0.4.0")
     app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:8000", "http://127.0.0.1:8000"],
                        allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
     active: dict[str, tuple[RepoPilot, TaskState]] = {}
     conversations = ConversationStore()
-    rag_assistant = CodeRagAssistant(root, conversations=conversations)
+    catalog = RepositoryCatalog(root)
+    runtime = {"root": root, "rag_assistant": CodeRagAssistant(root, conversations=conversations),
+               "repository": catalog.register(root, label=root.name, source="local")}
     web_root = Path(__file__).parent / "web"
 
     class TaskRequest(BaseModel):
@@ -43,6 +46,15 @@ def create_app(repo: str | Path):
         conversation_id: str | None = Field(default=None, max_length=100)
         top_k: int = Field(default=4, ge=1, le=8)
 
+    class GitHubImportRequest(BaseModel):
+        github_url: str = Field(min_length=20, max_length=500)
+
+    def select_repository(info):
+        runtime["root"] = Path(info.root)
+        runtime["repository"] = info
+        runtime["rag_assistant"] = CodeRagAssistant(runtime["root"], conversations=conversations)
+        return {"repository": asdict(info), "files": catalog.list_files(runtime["root"])}
+
     def task_view(pilot: RepoPilot, state: TaskState) -> dict:
         return {
             "task_id": state.task_id, "issue": state.issue, "status": state.status.value, "plan": state.plan,
@@ -57,7 +69,7 @@ def create_app(repo: str | Path):
     def get_active(task_id: str) -> tuple[RepoPilot, TaskState]:
         if task_id in active:
             return active[task_id]
-        pilot = RepoPilot(root)
+        pilot = RepoPilot(runtime["root"])
         state = pilot.resume(task_id)
         if not state:
             raise HTTPException(status_code=404, detail="task not found")
@@ -70,21 +82,56 @@ def create_app(repo: str | Path):
 
     @app.get("/health")
     def health():
-        return {"status": "healthy", "repository": str(root), "mode": "local-only"}
+        return {"status": "healthy", "repository": str(runtime["root"]), "mode": "local-only"}
 
     @app.get("/api/tools")
     def list_tools():
-        registry = create_registry(RepoPilot(root))
+        registry = create_registry(RepoPilot(runtime["root"]))
         return {"tools": [{"name": tool.name, "risk": tool.risk} for tool in registry._tools.values()]}
+
+    @app.get("/api/repository")
+    def repository_info():
+        return {"repository": asdict(runtime["repository"]), "files": catalog.list_files(runtime["root"])}
+
+    @app.post("/api/repositories/import/github")
+    def import_github(request: GitHubImportRequest):
+        try:
+            return select_repository(catalog.import_github(request.github_url))
+        except RepositoryImportError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+
+    @app.post("/api/repositories/import/zip")
+    def import_zip(file: UploadFile = File(...)):
+        if not (file.filename or "").lower().endswith(".zip"):
+            raise HTTPException(status_code=400, detail="Upload a .zip repository archive")
+        try:
+            return select_repository(catalog.import_zip(file.file.read(), file.filename or "repository.zip"))
+        except RepositoryImportError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+
+    @app.get("/api/repository/file")
+    def repository_file(path: str):
+        try:
+            return catalog.read_file(runtime["root"], path)
+        except RepositoryImportError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
 
     @app.post("/api/chat")
     def chat(request: ChatRequest):
         """Read-only code RAG chat. It never creates or applies a patch."""
-        return CodeRagAssistant.view(rag_assistant.ask(request.message, request.conversation_id, request.top_k))
+        return CodeRagAssistant.view(runtime["rag_assistant"].ask(request.message, request.conversation_id, request.top_k))
+
+    @app.post("/api/chat/stream")
+    def chat_stream(request: ChatRequest):
+        """SSE delivery for tool events and model answer deltas."""
+        def stream():
+            for event, payload in runtime["rag_assistant"].stream(request.message, request.conversation_id, request.top_k):
+                yield f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+        return StreamingResponse(stream(), media_type="text/event-stream")
 
     @app.post("/api/tasks")
     def create_task(request: TaskRequest):
-        pilot = RepoPilot(root)
+        pilot = RepoPilot(runtime["root"])
         state = pilot.analyze(request.issue, request.top_k)
         state.test_target = request.test_target
         pilot.tasks.save(state, pilot.evidence)

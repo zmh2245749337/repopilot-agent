@@ -43,9 +43,25 @@ class CodeRagAssistantTests(unittest.TestCase):
                          ["user", "assistant", "user", "assistant"])
         self.assertEqual(second.trace[0]["intent"], "repository_summary")
 
+    def test_follow_up_is_rewritten_and_routed_to_dependencies(self):
+        assistant = CodeRagAssistant(self.root)
+        first = assistant.ask("Where is list_orders?")
+        second = assistant.ask("What imports does it depend on?", first.conversation_id)
+        self.assertEqual(second.intent, "dependency_lookup")
+        self.assertEqual(second.tool, "locate_dependencies")
+        self.assertIn("Previous question", second.rewritten_query)
+        self.assertTrue(next(event for event in second.trace if event["event"] == "query.rewritten")["applied"])
+
     def test_configured_responder_is_used_for_grounded_answer(self):
         assistant = CodeRagAssistant(self.root, responder=FakeResponder())
         answer = assistant.ask("Where is list_orders?")
         self.assertEqual(answer.provider, "openai-compatible:test-model")
         self.assertFalse(answer.fallback)
         self.assertIn("orders.py", answer.answer)
+
+    def test_offline_stream_emits_metadata_deltas_and_completion(self):
+        assistant = CodeRagAssistant(self.root)
+        events = list(assistant.stream("Where is list_orders?"))
+        self.assertEqual(events[0][0], "meta")
+        self.assertTrue(any(event == "answer.delta" for event, _ in events))
+        self.assertEqual(events[-1][0], "complete")

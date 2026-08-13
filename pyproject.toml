@@ -9,7 +9,7 @@ description = "Evidence-grounded repository engineering agent with a local dashb
 requires-python = ">=3.10"
 
 [project.optional-dependencies]
-api = ["fastapi>=0.110", "uvicorn[standard]>=0.27"]
+api = ["fastapi>=0.110", "uvicorn[standard]>=0.27", "python-multipart>=0.0.9"]
 mcp = ["mcp>=1.0"]
 dev = ["pytest>=7.0", "httpx>=0.24"]
 
