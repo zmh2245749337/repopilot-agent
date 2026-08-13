@@ -1,57 +1,68 @@
-# RepoPilot Agent
+# RepoPilot
 
-RepoPilot 是一个面向 Python 代码仓库的、证据驱动的研发协作 Agent MVP。它把 Issue 转换为结构化计划，使用 AST 感知的代码检索定位相关符号，并把代码行、工具结果和测试输出保存为 Evidence，后续扩展为可审批、可恢复的 Issue-to-Patch 工作流。
+面向 Python 仓库的、带证据与人工审批门的 Issue-to-Patch Agent。它将 Issue 转换为可追溯任务：检索 AST 代码块、收集测试证据、提出最小补丁、等待审批、在隔离工作区执行、重新验证并输出审查报告。
 
-## 当前已实现
-
-- Python AST 函数/类级切分与符号索引
-- 关键词 + 符号加权的混合检索骨架
-- Plan–Retrieve–Execute 任务状态与结构化 Trace
-- EvidenceStore 代码/测试证据模型
-- Tool Registry 与高风险工具人工审批门
-- pytest 执行与结果证据化
-- 分页、空字段、路径穿越三个 Demo Issue
-- 3 个核心单元测试
-
-> README 只陈述当前代码已经实现的能力。LangGraph、Embedding、MCP、FastAPI/SSE、SQLite Checkpoint、隔离 worktree 与 Reviewer Agent 属于下一阶段。
-
-## Quickstart
-
-```bash
-python -m pip install -e .
-repopilot . "list_orders 分页 offset 错误"
-python -m unittest discover -s tests -v
-```
-
-## 目标流程
+> 这是一个受控的小范围代码维护 Agent，不是通用 IDE 或无人值守的自动改码工具。
 
 ```mermaid
 flowchart LR
-    I[Issue / Error / PR] --> P[Plan]
-    P --> R[AST-aware Hybrid RAG]
-    R --> T[Search / Read / Test Tools]
-    T --> E[EvidenceStore]
-    E --> A[Human Approval]
-    A --> X[Patch in Isolated Worktree]
-    X --> V[Test + Reviewer]
-    V --> O[Traceable Report]
+    I[Issue] --> P[Plan]
+    P --> R[AST-aware retrieval]
+    R --> E[EvidenceStore]
+    E --> A{Human approval}
+    A -->|Approved| W[Isolated worktree]
+    W --> T[pytest verification]
+    T --> V[Reviewer]
+    V --> O[Report + SQLite checkpoint]
 ```
 
-## Roadmap
+## 已实现能力
 
-- [ ] Embedding + BM25 + AST 邻接扩展
-- [ ] LangGraph Developer/Reviewer 工作流
-- [ ] SQLite Checkpoint 与任务恢复
-- [ ] FastAPI + SSE 执行轨迹
-- [ ] MCP 只读代码工具
-- [ ] worktree 隔离补丁与 Diff 审批
-- [ ] 受控 Bug 仓库及真实开源 PR 案例
+- Python AST 函数、类和模块级代码切分，结合关键词与符号加权检索。
+- 显式任务状态机与事件轨迹：计划、检索、执行、审批、应用、验证、审查、完成。
+- `EvidenceStore` 保存代码定位、测试输出与补丁引用；SQLite 保存可查询检查点。
+- 高风险补丁必须经过显式审批；补丁会进入 Git worktree（非 Git 演示目录则使用完整副本），不会直接修改目标仓库。
+- 受限 pytest 调用：禁止绝对路径及越界路径。
+- 确定性分页修复规则和可复现演示，不需要模型或 API Key。
+- 可选 FastAPI + SSE 接口，用于展示任务、审批与事件流。
 
-## Why this project
+## 快速开始
 
-普通代码 RAG 的终点是回答问题；RepoPilot 的目标是把检索、工具执行、权限审批、补丁验证和证据报告串成一条可以审计的研发任务链路。
+核心演示只依赖 Python 3.10+ 和 pytest：
 
-## Limitations
+```bash
+python -m pytest -q
+$env:PYTHONPATH = "$PWD/src"  # PowerShell
+python -m repopilot.cli ./demo/cases/pagination_off_by_one "第一页漏掉第一条订单，list_orders 的 offset 错误" --propose
+```
 
-当前版本是可测试的架构 MVP，不是通用 Coding Agent，不会自动推送代码，也不会执行任意 Shell 命令。结果能力取决于后续接入的模型、检索器和受控工具。
+上面命令只生成建议，状态会停在 `waiting_approval`。确认要运行完整流程时：
 
+```bash
+python -m repopilot.cli ./demo/cases/pagination_off_by_one "第一页漏掉第一条订单，list_orders 的 offset 错误" --propose --approve
+```
+
+`--approve` 是人工审批的命令行表达；修复只写入隔离目录，原演示仓库仍保留缺陷以便重复演示。
+
+## 可选 Web API
+
+安装 API 额外依赖后：
+
+```bash
+pip install -e '.[api]'
+uvicorn repopilot.api:create_app --factory --reload --port 8000
+```
+
+`create_app()` 需要传入目标仓库路径，因此生产启动建议采用一个很薄的项目启动文件，例如 `create_app("/path/to/repo")`。接口包括：创建任务、读取检查点、审批、验证审查和 SSE 事件流。
+
+## 演示场景与边界
+
+| 场景 | 当前支持 |
+| --- | --- |
+| 分页 off-by-one | 完整 Issue → 建议 → 审批 → 隔离修复 → pytest → 审查 |
+| 可选字段异常 | Issue 与代码检索演示 |
+| 路径穿越 | Issue 与风险定位演示 |
+
+当前版本只支持 Python、小范围文本补丁与允许的 pytest 命令；没有接入大模型、向量数据库、MCP 服务或自动推送 GitHub。模型接入应替换 Planner 层，且仍必须保留证据、审批与隔离执行边界。
+
+详见 [架构说明](docs/ARCHITECTURE.md) 和 [限制说明](docs/LIMITATIONS.md)。
