@@ -57,6 +57,14 @@ python -m repopilot.cli ./demo/cases/pagination_off_by_one "第一页漏掉第�
 
 添加 `--approve` 会在隔离工作区应用建议并运行测试，原演示目录保持不变。
 
+## Code RAG Copilot
+
+仪表盘顶部提供只读的 Code RAG Copilot：它会先识别提问类型，再通过 AST/BM25 与可选 Embedding 的混合检索定位代码，并把文件、行号和检索通道显示为引用。配置已有的 `REPOPILOT_MODEL_*` 环境变量后，它会调用 OpenAI-compatible `/chat/completions` 生成严格基于检索证据的回答；未配置或模型异常时自动回退到离线证据回答。
+
+聊天接口为 `POST /api/chat`，传入 `message`、可选 `conversation_id` 和 `top_k`；响应包含回答、引用、模型提供方、回退标记和 Agent 轨迹。该接口始终只读，不能创建、批准或应用补丁。
+
+详细设计与配置见 [Code RAG 说明](docs/CODE_RAG.md)。
+
 ## HTTP API
 
 | 方法 | 路径 | 作用 |

@@ -12,6 +12,7 @@
 
 - 设计并实现 Python 代码维护 Agent 的状态机：将 Issue 处理为“代码证据 → 原仓库失败基线 → 待审批补丁 → 隔离修复 → 同目标回归 → 审查报告”的受控流程，避免未经复现的自动修改。
 - 实现 AST 符号索引、BM25 检索和可选 Embedding RRF 融合；通过 FastAPI 仪表盘、CLI 与 MCP 工具提供统一入口，并用 SQLite 保存任务、证据、事件和审查轨迹。
+- 构建只读 Code RAG Copilot，支持多轮代码问答、意图识别、文件/行号引用及模型故障回退；将 LLM 约束在检索证据回答层，避免绕过安全修复流程。
 - 构建 GitHub Actions 质量门禁，自动执行 13 个测试、3 个受控 Bug 场景和评估报告可重复性检查；3/3 案例完成“修复前失败、修复后通过”的闭环。
 
 ### 技术关键词
@@ -22,6 +23,7 @@ Python、FastAPI、pytest、SQLite、AST、BM25、RAG、MCP、Git worktree、Git
 
 - Built RepoPilot, an evidence-grounded maintenance agent for Python repositories. It enforces an Issue-to-Patch workflow: code evidence, failing baseline reproduction, human approval, isolated patching, same-target regression testing, and reviewer evidence.
 - Implemented AST/BM25 retrieval with optional embedding-based RRF ranking, plus FastAPI dashboard, CLI, read-only MCP tools, and SQLite-backed task/evidence audit trails.
+- Added a read-only Code RAG Copilot with multi-turn context, intent classification, file-and-line citations, and grounded OpenAI-compatible responses with offline fallback.
 - Added reproducible GitHub Actions verification covering 13 tests, 3 controlled bug scenarios, and generated-report consistency; all controlled cases record a failing baseline before a passing isolated regression run.
 
 ## STAR 面试故事（约 90 秒）

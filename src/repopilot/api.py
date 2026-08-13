@@ -4,6 +4,7 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 
+from .chat import CodeRagAssistant, ConversationStore
 from .core import RepoPilot, TaskState
 from .tools import create_registry
 
@@ -22,6 +23,8 @@ def create_app(repo: str | Path):
     app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:8000", "http://127.0.0.1:8000"],
                        allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
     active: dict[str, tuple[RepoPilot, TaskState]] = {}
+    conversations = ConversationStore()
+    rag_assistant = CodeRagAssistant(root, conversations=conversations)
     web_root = Path(__file__).parent / "web"
 
     class TaskRequest(BaseModel):
@@ -34,6 +37,11 @@ def create_app(repo: str | Path):
 
     class TestRequest(BaseModel):
         test_target: str = Field(default="tests", min_length=1, max_length=300)
+
+    class ChatRequest(BaseModel):
+        message: str = Field(min_length=2, max_length=8_000)
+        conversation_id: str | None = Field(default=None, max_length=100)
+        top_k: int = Field(default=4, ge=1, le=8)
 
     def task_view(pilot: RepoPilot, state: TaskState) -> dict:
         return {
@@ -68,6 +76,11 @@ def create_app(repo: str | Path):
     def list_tools():
         registry = create_registry(RepoPilot(root))
         return {"tools": [{"name": tool.name, "risk": tool.risk} for tool in registry._tools.values()]}
+
+    @app.post("/api/chat")
+    def chat(request: ChatRequest):
+        """Read-only code RAG chat. It never creates or applies a patch."""
+        return CodeRagAssistant.view(rag_assistant.ask(request.message, request.conversation_id, request.top_k))
 
     @app.post("/api/tasks")
     def create_task(request: TaskRequest):

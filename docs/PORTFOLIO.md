@@ -34,6 +34,7 @@ flowchart LR
 
 - Python AST 索引、BM25 词法检索，以及可选 OpenAI-compatible Embedding 的 RRF 融合检索。
 - 离线确定性 Planner；也可配置 OpenAI-compatible 服务生成结构化计划，异常时自动回退。
+- Code RAG Copilot：支持多轮只读代码对话、意图识别、混合检索、文件行号引用和 Agent 轨迹；可选模型回答严格受检索证据约束。
 - FastAPI 本地仪表盘、CLI 和 stdio MCP Server 三种使用入口。
 - 限制性 MCP 工具：仅暴露代码搜索、读取文件与 pytest；不暴露补丁写入。
 - SQLite 检查点和事件轨迹，可恢复任务状态与证据。

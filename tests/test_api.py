@@ -45,3 +45,11 @@ class ApiWorkflowTests(unittest.TestCase):
         self.assertEqual(rejected.status_code, 200)
         self.assertEqual(rejected.json()["task"]["status"], "cancelled")
         self.assertIn("page * page_size", (self.root / "orders.py").read_text(encoding="utf-8"))
+
+    def test_read_only_code_rag_chat_returns_citations(self):
+        response = self.client.post("/api/chat", json={"message": "Where is list_orders implemented?"})
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["provider"], "offline-evidence")
+        self.assertEqual(payload["citations"][0]["path"], "orders.py")
+        self.assertIn("answer.generated", [event["event"] for event in payload["trace"]])
