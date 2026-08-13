@@ -1,0 +1,26 @@
+[
+  {
+    "case": "pagination_off_by_one",
+    "status": "completed",
+    "proposal": true,
+    "baseline_failed": true,
+    "test_passed": true,
+    "review": "approve"
+  },
+  {
+    "case": "optional_field_500",
+    "status": "completed",
+    "proposal": true,
+    "baseline_failed": true,
+    "test_passed": true,
+    "review": "approve"
+  },
+  {
+    "case": "path_traversal",
+    "status": "completed",
+    "proposal": true,
+    "baseline_failed": true,
+    "test_passed": true,
+    "review": "approve"
+  }
+]

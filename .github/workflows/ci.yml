@@ -1,0 +1,39 @@
+name: Verify RepoPilot
+
+on:
+  push:
+    branches: [main, "agent/**"]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Tests and controlled evaluation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install project and test dependencies
+        run: python -m pip install -e ".[api,dev]"
+
+      - name: Run unit and API tests
+        run: python -m pytest -q
+
+      - name: Run controlled Issue-to-Patch evaluation
+        run: python scripts/run_controlled_eval.py
+
+      - name: Run Code RAG routing and citation evaluation
+        run: python scripts/run_rag_eval.py
+
+      - name: Check generated report remains reproducible
+        run: git diff --exit-code -- reports/controlled_eval.json reports/rag_eval.json

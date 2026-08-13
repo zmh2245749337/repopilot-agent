@@ -1,0 +1,54 @@
+[
+  {
+    "case": "pagination_off_by_one",
+    "source_hit": true,
+    "symbol_hit": true,
+    "top1_hit": true,
+    "intent_hit": true,
+    "tool_hit": true,
+    "citations": [
+      "orders.py",
+      "tests/test_orders.py"
+    ]
+  },
+  {
+    "case": "optional_field_500",
+    "source_hit": true,
+    "symbol_hit": true,
+    "top1_hit": true,
+    "intent_hit": true,
+    "tool_hit": true,
+    "citations": [
+      "tests/test_orders.py",
+      "tests/test_orders.py",
+      "orders.py"
+    ]
+  },
+  {
+    "case": "path_traversal",
+    "source_hit": true,
+    "symbol_hit": true,
+    "top1_hit": true,
+    "intent_hit": true,
+    "tool_hit": true,
+    "citations": [
+      "downloads.py",
+      "tests/test_downloads.py",
+      "tests/test_downloads.py"
+    ]
+  },
+  {
+    "case": "self_repository",
+    "source_hit": true,
+    "symbol_hit": true,
+    "top1_hit": true,
+    "intent_hit": true,
+    "tool_hit": true,
+    "citations": [
+      "src/repopilot/chat.py",
+      "tests/test_api.py",
+      "tests/test_core.py",
+      "tests/test_mcp_tools.py"
+    ]
+  }
+]

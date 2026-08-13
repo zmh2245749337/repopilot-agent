@@ -1,0 +1,5 @@
+[
+  {"case": "pagination_off_by_one", "issue": "list_orders first page offset bug", "target_file": "orders.py", "test_target": "tests"},
+  {"case": "optional_field_500", "issue": "create_order optional note None causes 500", "target_file": "orders.py", "test_target": "tests"},
+  {"case": "path_traversal", "issue": "resolve_download_path allows requested_path ../ traversal", "target_file": "downloads.py", "test_target": "tests"}
+]

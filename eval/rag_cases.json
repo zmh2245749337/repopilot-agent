@@ -1,0 +1,35 @@
+[
+  {
+    "case": "pagination_off_by_one",
+    "query": "list_orders 的分页逻辑在哪里？",
+    "expected_path": "orders.py",
+    "expected_symbol": "list_orders",
+    "expected_intent": "code_location",
+    "expected_tool": "search_code"
+  },
+  {
+    "case": "optional_field_500",
+    "query": "应该运行哪个测试来验证 optional note 的问题？",
+    "expected_path": "tests/test_orders.py",
+    "expected_symbol": "test_missing_note_is_safe",
+    "expected_intent": "test_guidance",
+    "expected_tool": "suggest_tests"
+  },
+  {
+    "case": "path_traversal",
+    "query": "哪里有路径穿越安全风险？",
+    "expected_path": "downloads.py",
+    "expected_symbol": "resolve_download_path",
+    "expected_intent": "safety_review",
+    "expected_tool": "scan_safety"
+  },
+  {
+    "case": "self_repository",
+    "repository": ".",
+    "query": "Where is CodeToolRegistry implemented?",
+    "expected_path": "src/repopilot/chat.py",
+    "expected_symbol": "CodeToolRegistry",
+    "expected_intent": "code_location",
+    "expected_tool": "search_code"
+  }
+]
