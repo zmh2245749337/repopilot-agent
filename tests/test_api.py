@@ -26,6 +26,10 @@ class ApiWorkflowTests(unittest.TestCase):
     def test_dashboard_and_approved_workflow(self):
         self.assertEqual(self.client.get("/").status_code, 200)
         task = self.client.post("/api/tasks", json={"issue": "list_orders first page offset bug"}).json()
+        self.assertEqual(task["status"], "executing")
+        reproduced = self.client.post(f"/api/tasks/{task['task_id']}/reproduce", json={"test_target": "tests"})
+        self.assertEqual(reproduced.status_code, 200)
+        task = reproduced.json()["task"]
         self.assertEqual(task["status"], "waiting_approval")
         approved = self.client.post(f"/api/tasks/{task['task_id']}/approve")
         self.assertEqual(approved.status_code, 200)
@@ -36,6 +40,7 @@ class ApiWorkflowTests(unittest.TestCase):
 
     def test_reject_leaves_repository_unchanged(self):
         task = self.client.post("/api/tasks", json={"issue": "list_orders first page offset bug"}).json()
+        task = self.client.post(f"/api/tasks/{task['task_id']}/reproduce", json={"test_target": "tests"}).json()["task"]
         rejected = self.client.post(f"/api/tasks/{task['task_id']}/reject", json={"reason": "not now"})
         self.assertEqual(rejected.status_code, 200)
         self.assertEqual(rejected.json()["task"]["status"], "cancelled")

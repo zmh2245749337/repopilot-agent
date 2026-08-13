@@ -27,12 +27,13 @@ def create_app(repo: str | Path):
     class TaskRequest(BaseModel):
         issue: str = Field(min_length=3, max_length=8_000)
         top_k: int = Field(default=5, ge=1, le=20)
+        test_target: str = Field(default="tests", min_length=1, max_length=300)
 
     class RejectionRequest(BaseModel):
         reason: str = Field(default="Rejected by human reviewer", max_length=1_000)
 
-    class VerifyRequest(BaseModel):
-        test_target: str = Field(default="tests", max_length=300)
+    class TestRequest(BaseModel):
+        test_target: str = Field(default="tests", min_length=1, max_length=300)
 
     def task_view(pilot: RepoPilot, state: TaskState) -> dict:
         return {
@@ -40,6 +41,8 @@ def create_app(repo: str | Path):
             "proposal": [asdict(item) for item in state.proposal], "trace": state.trace,
             "review": asdict(state.review) if state.review else None,
             "workspace": state.workspace,
+            "test_target": state.test_target,
+            "baseline_test": state.baseline_test,
             "evidence": [asdict(pilot.evidence.items[item]) for item in state.evidence_ids],
         }
 
@@ -70,9 +73,19 @@ def create_app(repo: str | Path):
     def create_task(request: TaskRequest):
         pilot = RepoPilot(root)
         state = pilot.analyze(request.issue, request.top_k)
-        pilot.propose_patch(state)
+        state.test_target = request.test_target
+        pilot.tasks.save(state, pilot.evidence)
         active[state.task_id] = (pilot, state)
         return task_view(pilot, state)
+
+    @app.post("/api/tasks/{task_id}/reproduce")
+    def reproduce_task(task_id: str, request: TestRequest):
+        pilot, state = get_active(task_id)
+        result = pilot.reproduce(state, request.test_target)
+        if result.summary != "tests_failed":
+            raise HTTPException(status_code=409, detail="baseline test did not fail; no safe patch proposal will be created")
+        pilot.propose_patch(state)
+        return {"baseline": asdict(result), "task": task_view(pilot, state)}
 
     @app.get("/api/tasks/{task_id}")
     def get_task(task_id: str):
@@ -105,11 +118,11 @@ def create_app(repo: str | Path):
         return {"result": asdict(result), "task": task_view(pilot, state)}
 
     @app.post("/api/tasks/{task_id}/verify")
-    def verify_task(task_id: str, request: VerifyRequest):
+    def verify_task(task_id: str, request: TestRequest):
         pilot, state = get_active(task_id)
         if not state.workspace:
             raise HTTPException(status_code=409, detail="approve the proposal before verification")
-        test_result = pilot.run_pytest(request.test_target, root=Path(state.workspace))
+        test_result = pilot.run_pytest(request.test_target, root=Path(state.workspace), state=state)
         review = pilot.review_task(state, test_result)
         return {"test": asdict(test_result), "review": asdict(review), "task": task_view(pilot, state)}
 

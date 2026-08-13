@@ -34,16 +34,24 @@ class RepoPilotTests(unittest.TestCase):
     def test_approved_patch_completes_reviewed_workflow(self):
         pilot = RepoPilot(self.root)
         state = pilot.analyze("first page list_orders offset")
+        self.assertFalse(pilot.reproduce(state, "tests").ok)
         self.assertEqual(len(pilot.propose_patch(state)), 1)
         self.assertEqual(state.status, TaskStatus.WAITING_APPROVAL)
         self.assertTrue(pilot.apply_proposal(state).ok)
-        result = pilot.run_pytest("tests", root=Path(state.workspace))
+        result = pilot.run_pytest("tests", root=Path(state.workspace), state=state)
         review = pilot.review_task(state, result)
         self.assertTrue(result.ok, result.content)
         self.assertEqual(review.decision, "approve")
-        self.assertEqual(state.status, TaskStatus.COMPLETED)
+
+    def test_invalid_baseline_target_cannot_unlock_a_patch(self):
+        pilot = RepoPilot(self.root)
+        state = pilot.analyze("first page list_orders offset")
+        baseline = pilot.reproduce(state, "../outside")
+        self.assertEqual(baseline.summary, "invalid_test_target")
+        self.assertEqual(pilot.propose_patch(state), [])
+        self.assertEqual(state.status, TaskStatus.FAILED)
+        self.assertIsNone(state.workspace)
         self.assertIn("page * page_size", (self.root / "orders.py").read_text(encoding="utf-8"))
-        self.assertIn("(page - 1) * page_size", (Path(state.workspace) / "orders.py").read_text(encoding="utf-8"))
 
     def test_high_risk_tool_requires_approval(self):
         registry = ToolRegistry()

@@ -19,10 +19,12 @@ def main() -> None:
     pilot = RepoPilot(args.repo)
     state = pilot.analyze(args.issue, args.top_k)
     if args.propose or args.approve:
+        baseline = pilot.reproduce(state, args.test_target)
+        print(f"baseline={baseline.summary}")
         pilot.propose_patch(state)
     if args.approve:
         print(pilot.apply_proposal(state).summary)
-        test_result = pilot.run_pytest(args.test_target, root=Path(state.workspace) if state.workspace else None)
+        test_result = pilot.run_pytest(args.test_target, root=Path(state.workspace) if state.workspace else None, state=state)
         pilot.review_task(state, test_result)
     print(pilot.report(state))
 

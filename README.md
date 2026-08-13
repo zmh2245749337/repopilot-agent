@@ -37,7 +37,7 @@ $env:REPOPILOT_REPO_PATH = "$PWD"
 python -m uvicorn repopilot.app:app --app-dir src --host 127.0.0.1 --port 8000
 ```
 
-打开 `http://127.0.0.1:8000`，输入一个 Issue。界面会先展示计划和证据；只有点击“批准并生成隔离 Diff”后，才会在隔离目录中生成补丁。再点击“运行验证与审查”完成闭环。
+打开 `http://127.0.0.1:8000`，输入一个 Issue 与复现测试目标。界面会先展示计划和证据；接着点击“运行基线复现”，只有当原仓库中的目标测试确实失败，才会生成待审批建议。批准后才会在隔离目录中生成补丁，并在**同一测试目标**上运行回归验证与审查。
 
 若要体验控制好的演示案例，可把目标仓库设置为：
 
@@ -59,12 +59,13 @@ python -m repopilot.cli ./demo/cases/pagination_off_by_one "第一页漏掉第�
 
 | 方法 | 路径 | 作用 |
 | --- | --- | --- |
-| `POST` | `/api/tasks` | 创建分析任务并生成安全补丁建议 |
+| `POST` | `/api/tasks` | 创建分析任务、计划和证据 |
 | `GET` | `/api/tasks/{task_id}` | 查询或恢复任务 |
 | `GET` | `/api/tasks/{task_id}/events` | 获取 SSE 事件轨迹 |
+| `POST` | `/api/tasks/{task_id}/reproduce` | 在原仓库运行基线复现；失败后才生成待审批建议 |
 | `POST` | `/api/tasks/{task_id}/approve` | 人工批准，在隔离工作区生成补丁和 Diff |
 | `POST` | `/api/tasks/{task_id}/reject` | 拒绝建议，不修改任何代码 |
-| `POST` | `/api/tasks/{task_id}/verify` | 在隔离工作区运行受限 pytest 并审查 |
+| `POST` | `/api/tasks/{task_id}/verify` | 在隔离工作区对同一目标运行 pytest 并审查前后证据 |
 | `GET` | `/api/tasks/{task_id}/report` | 获取 Markdown 报告 |
 
 ## MCP Server

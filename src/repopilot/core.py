@@ -186,6 +186,8 @@ class TaskState:
     proposal: list[PatchOperation] = field(default_factory=list)
     review: Review | None = None
     workspace: str | None = None
+    test_target: str = "tests"
+    baseline_test: dict | None = None
 
     def event(self, name: str, **data: object) -> None:
         self.trace.append({"event": name, "at": int(time.time() * 1000), **data})
@@ -223,6 +225,8 @@ class TaskStore:
             proposal=[PatchOperation(**item) for item in raw.get("proposal", [])],
             review=Review(**raw["review"]) if raw.get("review") else None,
             workspace=raw.get("workspace"),
+            test_target=raw.get("test_target", "tests"),
+            baseline_test=raw.get("baseline_test"),
         )
         evidence = EvidenceStore()
         evidence.items = [Evidence(**item) for item in payload.get("evidence", [])]
@@ -287,18 +291,44 @@ class RepoPilot:
         self.tasks.save(state, self.evidence)
         return state
 
-    def run_pytest(self, target: str = "tests", root: Path | None = None) -> ToolResult:
+    def run_pytest(self, target: str = "tests", root: Path | None = None, state: TaskState | None = None) -> ToolResult:
         if Path(target).is_absolute() or ".." in Path(target).parts:
             return ToolResult(False, "invalid_test_target", "Test target must stay inside the repository")
         cwd = (root or self.repo).resolve()
         result = subprocess.run(["python", "-m", "pytest", target, "-q"], cwd=cwd,
-                                capture_output=True, text=True, timeout=60)
+                                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
         output = (result.stdout + result.stderr)[-MAX_OUTPUT:]
-        self.evidence.add(Evidence("test_output", target, output, {"returncode": result.returncode}))
+        evidence_id = self.evidence.add(Evidence("test_output", target, output, {"returncode": result.returncode,
+                                                                           "workspace": str(cwd)}))
+        if state:
+            state.evidence_ids.append(evidence_id)
         return ToolResult(result.returncode == 0, "tests_passed" if result.returncode == 0 else "tests_failed", output)
+
+    def reproduce(self, state: TaskState, target: str = "tests") -> ToolResult:
+        """Run the selected test in the original repository before proposing a patch."""
+        if state.status != TaskStatus.EXECUTING:
+            return ToolResult(False, "invalid_reproduction_state", "Task must be ready for diagnosis before reproduction")
+        state.test_target = target
+        result = self.run_pytest(target, state=state)
+        state.baseline_test = asdict(result)
+        reproduced = result.summary == "tests_failed"
+        state.event("reproduction.completed", target=target, reproduced=reproduced, summary=result.summary)
+        if not reproduced:
+            state.status = TaskStatus.FAILED
+            state.event("reproduction.inconclusive", reason="Selected test did not fail before any patch")
+        self.tasks.save(state, self.evidence)
+        return result
 
     def propose_patch(self, state: TaskState) -> list[PatchOperation]:
         """Propose only narrow, fixture-backed repairs for the controlled demos."""
+        if state.baseline_test is None:
+            state.event("proposal.deferred", reason="Run a baseline reproduction before proposing a patch")
+            self.tasks.save(state, self.evidence)
+            return []
+        if state.baseline_test.get("summary") != "tests_failed":
+            state.event("proposal.blocked", reason="Baseline test did not fail")
+            self.tasks.save(state, self.evidence)
+            return []
         rules = [
             ("offset = page * page_size", "offset = (page - 1) * page_size",
              "Page numbering is one-based; first page must begin at offset zero."),
@@ -331,11 +361,15 @@ class RepoPilot:
         workspace = base / task_id
         if workspace.exists():
             raise RuntimeError(f"workspace already exists: {workspace}")
-        git_check = subprocess.run(["git", "rev-parse", "--is-inside-work-tree"], cwd=self.repo,
-                                   capture_output=True, text=True)
-        if git_check.returncode == 0:
+        git_root = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=self.repo,
+                                  capture_output=True, text=True, encoding="utf-8", errors="replace")
+        # A nested directory inside a parent Git checkout is not a repository
+        # boundary. Creating a worktree there would clone the parent project,
+        # not the selected target, so use a copy in that case.
+        is_repository_root = git_root.returncode == 0 and Path((git_root.stdout or "").strip()).resolve() == self.repo
+        if is_repository_root:
             created = subprocess.run(["git", "worktree", "add", "--detach", str(workspace), "HEAD"], cwd=self.repo,
-                                     capture_output=True, text=True)
+                                     capture_output=True, text=True, encoding="utf-8", errors="replace")
             if created.returncode == 0:
                 return workspace
         shutil.copytree(self.repo, workspace, ignore=shutil.ignore_patterns(".repopilot", "__pycache__", ".pytest_cache", ".venv"))
@@ -385,10 +419,12 @@ class RepoPilot:
     def review_task(self, state: TaskState, test_result: ToolResult) -> Review:
         state.status = TaskStatus.REVIEWING
         allowed_paths = all(not Path(p.path).is_absolute() and ".." not in Path(p.path).parts for p in state.proposal)
-        decision = "approve" if test_result.ok and allowed_paths else "request_changes"
+        baseline_failed = bool(state.baseline_test and state.baseline_test.get("summary") == "tests_failed")
+        decision = "approve" if test_result.ok and allowed_paths and baseline_failed else "request_changes"
         checks = [f"tests: {'passed' if test_result.ok else 'failed'}", f"patch scope: {'valid' if allowed_paths else 'invalid'}",
+                  f"baseline reproduction: {'failed as expected' if baseline_failed else 'missing or passed'}",
                   f"evidence items: {len(state.evidence_ids)}"]
-        review = Review(decision, "Evidence, test output and patch scope were checked.", checks)
+        review = Review(decision, "Evidence, before/after test output and patch scope were checked.", checks)
         state.review = review
         state.status = TaskStatus.COMPLETED if decision == "approve" else TaskStatus.FAILED
         state.event("review.completed", decision=decision, checks=checks)
@@ -399,6 +435,8 @@ class RepoPilot:
         lines = [f"# RepoPilot task {state.task_id}", "", f"**Status:** {state.status.value}", "", "## Issue", state.issue,
                  "", "## Evidence", *[f"- {self.evidence.items[i].kind}: {self.evidence.items[i].source}" for i in state.evidence_ids],
                  "", "## Proposed patch", *[f"- `{p.path}`: {p.reason}" for p in state.proposal]]
+        if state.baseline_test:
+            lines.extend(["", "## Baseline reproduction", f"- target: `{state.test_target}`", f"- result: `{state.baseline_test['summary']}`"])
         if state.workspace:
             lines.extend(["", "## Isolated workspace", f"`{state.workspace}`"])
         if state.review:
