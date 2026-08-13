@@ -19,13 +19,13 @@ flowchart LR
 
 ## 亮点
 
-- AST 函数、类、模块切分，以及关键词和符号加权代码检索。
+- AST 函数、类、模块切分，BM25 词法检索与可选 OpenAI-compatible Embedding 的 RRF 融合检索。
 - 明确的任务状态机：计划、检索、执行、待审批、隔离应用、验证、审查、完成/取消。
 - SQLite 检查点：任务、证据、补丁建议和事件轨迹都可恢复。
 - 人工审批门：补丁只会在 Git worktree 或隔离副本中应用。
 - 本地仪表盘：可查看计划、代码证据、Diff、测试输出与审查结论。
 - 真实 MCP Server：向外部 Agent 暴露受限的代码搜索、文件读取和 pytest 工具。
-- 可复现分页 off-by-one 演示；不依赖 API Key 或大模型。
+- 三个可复现的受控 Bug 演示；默认不依赖 API Key 或大模型。
 
 ## 快速开始
 
@@ -84,4 +84,4 @@ python -m repopilot.mcp_server.server
 | 可选字段异常 | Issue 与代码检索演示 |
 | 路径穿越 | Issue 与风险定位演示 |
 
-当前版本仅分析 Python，并且只对受控分页模式给出确定性补丁；其他问题只生成证据，不会臆造修改。模型、向量检索和 GitHub 自动提交尚未接入。详见 [架构说明](docs/ARCHITECTURE.md)、[MCP 使用说明](docs/MCP.md) 和 [限制说明](docs/LIMITATIONS.md)。
+当前版本仅分析 Python，并且只对三个受控案例给出确定性补丁；其他问题只生成证据，不会臆造修改。配置 `REPOPILOT_MODEL_*` 后，Planner 会使用 OpenAI-compatible `/chat/completions` 输出结构化计划；配置 `REPOPILOT_EMBEDDING_*` 后，检索会融合 `/embeddings` 语义排序。网络或模型异常时会自动回退到离线计划和词法检索。运行 `python scripts/run_controlled_eval.py` 可生成三案例评估结果。详见 [架构说明](docs/ARCHITECTURE.md)、[MCP 使用说明](docs/MCP.md) 和 [限制说明](docs/LIMITATIONS.md)。

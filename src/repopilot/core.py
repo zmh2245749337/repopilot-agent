@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import ast
 import json
+import math
 import re
 import shutil
 import sqlite3
@@ -27,6 +28,10 @@ def tokens(text: str) -> set[str]:
     return {item.lower() for item in TOKEN_RE.findall(text)}
 
 
+def token_list(text: str) -> list[str]:
+    return [item.lower() for item in TOKEN_RE.findall(text)]
+
+
 @dataclass(frozen=True)
 class CodeChunk:
     path: str
@@ -43,6 +48,7 @@ class CodeIndex:
     def __init__(self, root: Path):
         self.root = root.resolve()
         self.chunks: list[CodeChunk] = []
+        self._document_tokens: list[list[str]] = []
 
     def build(self) -> int:
         self.chunks.clear()
@@ -63,15 +69,24 @@ class CodeIndex:
                     found = True
             if not found:
                 self.chunks.append(CodeChunk(rel, rel, "Module", 1, len(lines), source))
+        self._document_tokens = [token_list(chunk.content + " " + chunk.symbol + " " + chunk.path) for chunk in self.chunks]
         return len(self.chunks)
 
     def search(self, query: str, top_k: int = 5) -> list[tuple[float, CodeChunk]]:
-        query_tokens = tokens(query)
+        query_tokens = token_list(query)
+        if not query_tokens or not self.chunks:
+            return []
+        document_frequency = {token: sum(token in set(document) for document in self._document_tokens) for token in set(query_tokens)}
+        average_length = sum(len(document) for document in self._document_tokens) / max(1, len(self._document_tokens))
         ranked: list[tuple[float, CodeChunk]] = []
-        for chunk in self.chunks:
-            body, symbol = tokens(chunk.content), tokens(chunk.symbol + " " + chunk.path)
-            lexical = len(query_tokens & body) / max(1, len(query_tokens))
-            symbol_bonus = len(query_tokens & symbol) / max(1, len(query_tokens))
+        for chunk, document in zip(self.chunks, self._document_tokens):
+            lexical = 0.0
+            for token in query_tokens:
+                frequency = document.count(token)
+                if frequency:
+                    idf = math.log(1 + (len(self.chunks) - document_frequency[token] + 0.5) / (document_frequency[token] + 0.5))
+                    lexical += idf * frequency * 2.2 / (frequency + 1.2 * (1 - 0.75 + 0.75 * len(document) / max(1, average_length)))
+            symbol_bonus = len(set(query_tokens) & tokens(chunk.symbol + " " + chunk.path)) / max(1, len(set(query_tokens)))
             score = lexical + 1.5 * symbol_bonus
             if score:
                 ranked.append((score, chunk))
@@ -217,9 +232,13 @@ class TaskStore:
 class RepoPilot:
     """Safe, deterministic Issue → evidence → approval → patch → review workflow."""
 
-    def __init__(self, repo: Path):
+    def __init__(self, repo: Path, planner=None, embedding_provider=None):
         self.repo = repo.resolve()
         self.index = CodeIndex(self.repo)
+        from .planner import planner_from_env
+        from .retrieval import HybridRetriever, embedding_provider_from_env
+        self.planner = planner or planner_from_env()
+        self.retriever = HybridRetriever(self.index, embedding_provider if embedding_provider is not None else embedding_provider_from_env())
         self.evidence = EvidenceStore()
         self.tasks = TaskStore(self.repo)
 
@@ -237,10 +256,10 @@ class RepoPilot:
 
     def search_code(self, query: str, top_k: int = 5) -> list[dict]:
         self.index.build()
-        return [{"score": round(score, 4), "path": chunk.path, "symbol": chunk.symbol,
-                 "kind": chunk.kind, "start_line": chunk.start_line, "end_line": chunk.end_line,
-                 "content": chunk.content}
-                for score, chunk in self.index.search(query, top_k)]
+        return [{"score": round(result.score, 4), "path": result.chunk.path, "symbol": result.chunk.symbol,
+                 "kind": result.chunk.kind, "start_line": result.chunk.start_line, "end_line": result.chunk.end_line,
+                 "channels": result.channels, "content": result.chunk.content}
+                for result in self.retriever.search(query, top_k)]
 
     def read_file(self, relative_path: str, start_line: int | None = None, end_line: int | None = None) -> ToolResult:
         path = (self.repo / relative_path).resolve()
@@ -254,14 +273,15 @@ class RepoPilot:
 
     def analyze(self, issue: str, top_k: int = 5) -> TaskState:
         state = TaskState(issue=issue)
-        state.plan = ["Retrieve relevant AST chunks", "Reproduce with an allowed test", "Propose the smallest patch",
-                      "Wait for human approval", "Verify and review evidence"]
-        state.event("plan.created", steps=state.plan)
+        plan_result = self.planner.plan(issue)
+        state.plan = plan_result.steps
+        state.event("plan.created", steps=state.plan, provider=plan_result.provider, fallback=plan_result.fallback)
         state.status = TaskStatus.RETRIEVING
         self.index.build()
-        for score, chunk in self.index.search(issue, top_k):
+        for result in self.retriever.search(issue, top_k):
+            chunk = result.chunk
             self._record(state, Evidence("code_reference", f"{chunk.path}:{chunk.start_line}", chunk.content,
-                                         {"symbol": chunk.symbol, "score": round(score, 4)}))
+                                         {"symbol": chunk.symbol, "score": round(result.score, 4), "channels": result.channels}))
         state.event("retrieval.completed", count=len(state.evidence_ids))
         state.status = TaskStatus.EXECUTING if state.evidence_ids else TaskStatus.FAILED
         self.tasks.save(state, self.evidence)
@@ -278,19 +298,28 @@ class RepoPilot:
         return ToolResult(result.returncode == 0, "tests_passed" if result.returncode == 0 else "tests_failed", output)
 
     def propose_patch(self, state: TaskState) -> list[PatchOperation]:
-        """Propose only a narrow, explainable pagination repair in the bundled demo."""
+        """Propose only narrow, fixture-backed repairs for the controlled demos."""
+        rules = [
+            ("offset = page * page_size", "offset = (page - 1) * page_size",
+             "Page numbering is one-based; first page must begin at offset zero."),
+            ("normalized_note = note.strip()", "normalized_note = (note or '').strip()",
+             "The optional note must be normalized safely before string operations."),
+            ("return base_dir / requested_path",
+             "candidate = (base_dir / requested_path).resolve()\n    if base_dir.resolve() not in candidate.parents:\n        raise ValueError('path outside base directory')\n    return candidate",
+             "Resolve the requested path and reject values that escape the configured base directory."),
+        ]
         candidates: Iterable[Evidence] = (self.evidence.items[item] for item in state.evidence_ids)
         for item in candidates:
             path = item.source.split(":")[0]
             if path.startswith("tests/") or "/tests/" in path:
                 continue
-            if "offset = page * page_size" in item.content:
-                state.proposal = [PatchOperation(path, "offset = page * page_size", "offset = (page - 1) * page_size",
-                                                 "Page numbering is one-based; first page must begin at offset zero.")]
-                state.status = TaskStatus.WAITING_APPROVAL
-                state.event("approval.required", proposed_files=[operation.path for operation in state.proposal])
-                self.tasks.save(state, self.evidence)
-                return state.proposal
+            for search, replace, reason in rules:
+                if search in item.content:
+                    state.proposal = [PatchOperation(path, search, replace, reason)]
+                    state.status = TaskStatus.WAITING_APPROVAL
+                    state.event("approval.required", proposed_files=[operation.path for operation in state.proposal])
+                    self.tasks.save(state, self.evidence)
+                    return state.proposal
         state.event("proposal.unavailable", reason="No safe deterministic patch rule matched")
         self.tasks.save(state, self.evidence)
         return []

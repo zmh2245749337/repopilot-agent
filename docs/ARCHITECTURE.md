@@ -8,7 +8,9 @@ web/index.html → FastAPI routes → RepoPilot core → CodeIndex / EvidenceSto
 MCP stdio server → bounded tool adapter → RepoPilot core
 ```
 
-- `core.py`：领域模型、AST 索引、证据、SQLite 检查点、审批状态机、隔离工作区、Diff 与审查。
+- `core.py`：领域模型、AST/BM25 索引、证据、SQLite 检查点、审批状态机、隔离工作区、Diff 与审查。
+- `planner.py`：离线确定性 Planner 与可选 OpenAI-compatible JSON Planner；不可用时安全回退。
+- `retrieval.py`：词法与可选 Embedding 排名的 Reciprocal Rank Fusion；语义服务异常时保留词法结果。
 - `api.py`：任务创建、恢复、审批、拒绝、验证、报告和 SSE 事件路由。
 - `web/index.html`：本地仪表盘，展示计划、证据、补丁建议、Diff 和审查结果。
 - `tools.py`：统一注册低风险搜索/读取和中风险测试能力。
