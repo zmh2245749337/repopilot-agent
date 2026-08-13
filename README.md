@@ -90,3 +90,9 @@ python -m repopilot.mcp_server.server
 当前版本仅分析 Python，并且只对三个受控案例给出确定性补丁；其他问题只生成证据，不会臆造修改。配置 `REPOPILOT_MODEL_*` 后，Planner 会使用 OpenAI-compatible `/chat/completions` 输出结构化计划；配置 `REPOPILOT_EMBEDDING_*` 后，检索会融合 `/embeddings` 语义排序。网络或模型异常时会自动回退到离线计划和词法检索。运行 `python scripts/run_controlled_eval.py` 可生成三案例评估结果。详见 [架构说明](docs/ARCHITECTURE.md)、[MCP 使用说明](docs/MCP.md) 和 [限制说明](docs/LIMITATIONS.md)。
 
 每次推送与面向 `main` 的 Pull Request 都会自动执行单元/API 测试和三案例的受控评估；评估报告必须可重复生成且没有差异。
+
+## 作品集材料
+
+- [项目作品集说明](docs/PORTFOLIO.md)：适合 GitHub 主页、作品集页面或面试前发送。
+- [3 分钟演示脚本](docs/DEMO_SCRIPT.md)：从启动到展示安全闭环的逐步讲解。
+- [简历与面试表述](docs/RESUME.md)：中英文简历要点、STAR 面试故事和追问提示。

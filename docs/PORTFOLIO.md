@@ -1,0 +1,58 @@
+# RepoPilot 项目作品集说明
+
+## 一句话介绍
+
+RepoPilot 是一个面向 Python 仓库的证据驱动代码维护 Agent：它先复现问题、定位代码与测试证据，再提出最小补丁；补丁必须经人工批准，并只能在隔离工作区验证，最后生成可追溯的审查结论。
+
+## 要解决的问题
+
+通用代码 Agent 容易出现三类风险：没有先确认 Bug 是否存在、修改直接落到原仓库、只看“修复后通过”而不证明修复前确实失败。RepoPilot 将这三点变成不可绕过的任务门槛。
+
+| 风险 | RepoPilot 的处理方式 |
+| --- | --- |
+| Issue 描述不准确 | 先在原仓库运行指定 pytest 目标；测试未失败则不生成补丁。 |
+| Agent 直接写坏代码 | 需要人工批准，且只允许写入 `git worktree` 或隔离副本。 |
+| 回归验证不可信 | 固定使用同一测试目标，Reviewer 同时检查失败基线、通过结果和补丁路径。 |
+| Agent 行为不可解释 | SQLite 保存任务、证据、Diff、测试输出和事件轨迹。 |
+
+## 核心流程
+
+```mermaid
+flowchart LR
+    A["Issue / 报错"] --> B["计划与代码证据"]
+    B --> C["原仓库基线复现"]
+    C -->|测试失败| D["最小补丁建议"]
+    C -->|测试通过或无效| X["安全阻断"]
+    D --> E{"人工批准"}
+    E -->|批准| F["隔离工作区修复"]
+    E -->|拒绝| Y["结束，不改代码"]
+    F --> G["同一测试目标回归"]
+    G --> H["Reviewer 审查报告"]
+```
+
+## 已实现能力
+
+- Python AST 索引、BM25 词法检索，以及可选 OpenAI-compatible Embedding 的 RRF 融合检索。
+- 离线确定性 Planner；也可配置 OpenAI-compatible 服务生成结构化计划，异常时自动回退。
+- FastAPI 本地仪表盘、CLI 和 stdio MCP Server 三种使用入口。
+- 限制性 MCP 工具：仅暴露代码搜索、读取文件与 pytest；不暴露补丁写入。
+- SQLite 检查点和事件轨迹，可恢复任务状态与证据。
+- Git 仓库根目录使用 `git worktree`；嵌套目录和非 Git 演示项目使用隔离副本，避免误操作父仓库。
+
+## 可信度证据
+
+项目内置 3 个受控 Bug 案例：分页 off-by-one、可选字段异常和路径穿越。当前评估结果为 3/3 完成：每个案例均记录到“修复前测试失败、隔离修复后同一测试通过、Reviewer 批准”。详细机器可读结果见 [controlled_eval.json](../reports/controlled_eval.json)。
+
+本地回归包含 13 个测试和 3 个参数化子场景；GitHub Actions 会在推送和 Pull Request 时自动运行测试、受控评估及报告可重复性检查。
+
+## 技术栈
+
+Python 3.10+ · FastAPI · pytest · SQLite · AST · BM25 · Git worktree · MCP · GitHub Actions
+
+## 真实边界
+
+RepoPilot 目前只针对 Python 分析，并仅对内置的 3 个受控案例自动生成确定性补丁。未知 Issue 会停留在“检索与证据”阶段，不假装能修复一切。这是刻意的安全设计；详细限制见 [LIMITATIONS.md](LIMITATIONS.md)。
+
+## 面试展示建议
+
+优先演示分页案例：输入 Issue 后运行基线复现，展示测试失败；再批准隔离补丁，展示 Diff、同一测试通过和 Reviewer 的前后证据。完整台词见 [DEMO_SCRIPT.md](DEMO_SCRIPT.md)。
