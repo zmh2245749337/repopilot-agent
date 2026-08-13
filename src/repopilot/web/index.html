@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>RepoPilot · 安全代码维护 Agent</title>
+  <style>
+    :root { --ink:#172033; --muted:#667085; --paper:#f6f8fc; --line:#dde3ef; --brand:#4f46e5; --brand-soft:#eeedff; --ok:#057a55; --warn:#b54708; --danger:#b42318; }
+    * { box-sizing:border-box } body { margin:0; background:var(--paper); color:var(--ink); font:14px/1.55 Inter,"Microsoft YaHei",system-ui,sans-serif; }
+    header { background:#10172a; color:#fff; padding:26px max(24px,calc((100vw - 1180px)/2)); display:flex; justify-content:space-between; gap:24px; align-items:center; }
+    header h1 { margin:0; font-size:23px; letter-spacing:-.4px } header p { margin:4px 0 0; color:#bdc5d8 } .badge { border:1px solid #425072; border-radius:99px; padding:6px 10px; color:#cbd5e1; white-space:nowrap; }
+    main { width:min(1180px,calc(100% - 36px)); margin:28px auto 56px; display:grid; grid-template-columns:390px 1fr; gap:20px; }
+    .card { background:#fff; border:1px solid var(--line); border-radius:14px; box-shadow:0 7px 24px rgba(29,41,57,.05); } .compose { padding:22px; height:max-content; position:sticky; top:18px; }
+    h2 { font-size:16px; margin:0 0 8px } .hint { color:var(--muted); margin:0 0 16px; font-size:13px } label { display:block; color:#344054; font-weight:650; margin:14px 0 6px; }
+    textarea,input { font:inherit; border:1px solid #cbd5e1; border-radius:9px; width:100%; padding:11px; outline:none; background:#fff; } textarea { min-height:158px; resize:vertical; } textarea:focus,input:focus { border-color:var(--brand); box-shadow:0 0 0 3px var(--brand-soft) }
+    .row { display:grid; grid-template-columns:1fr 100px; gap:10px; } button { cursor:pointer; border:0; border-radius:9px; padding:10px 14px; font:600 14px inherit; background:var(--brand); color:#fff; } button:hover { background:#4038c9 } button.secondary { background:#fff; color:#344054; border:1px solid #cbd5e1 } button.danger { background:#fff5f5; color:var(--danger); border:1px solid #fecdca } button:disabled { opacity:.55; cursor:not-allowed }
+    .content { display:grid; gap:20px } .empty { padding:62px 34px; text-align:center; color:var(--muted) } .empty b { display:block; font-size:17px; color:#344054; margin-bottom:6px } .workspace { padding:22px; display:none; }
+    .topline { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; border-bottom:1px solid var(--line); padding-bottom:16px; } .topline h2 { margin:0; font-size:18px } .status { border-radius:99px; padding:4px 10px; font-size:12px; font-weight:700; background:var(--brand-soft); color:#4338ca; }
+    .grid { display:grid; grid-template-columns:1fr 1fr; gap:15px; margin-top:18px; } .section { border:1px solid var(--line); border-radius:10px; padding:15px; } .section h3 { margin:0 0 10px; font-size:14px; } ul { padding-left:18px; margin:0 } li { margin:5px 0; }
+    .timeline { list-style:none; padding:0; } .timeline li { padding:8px 0 8px 18px; border-left:2px solid #d0d5dd; position:relative; color:#475467; } .timeline li:before { content:""; width:8px; height:8px; background:var(--brand); border-radius:50%; position:absolute; left:-5px; top:14px; }
+    pre { white-space:pre-wrap; overflow:auto; max-height:300px; margin:0; padding:12px; background:#10172a; color:#d7e0ff; border-radius:8px; font:12px/1.5 ui-monospace,Consolas,monospace; } .actions { display:flex; gap:9px; flex-wrap:wrap; margin-top:18px; } .notice { display:none; margin:12px 0 0; padding:10px; border-radius:8px; background:#ecfdf3; color:var(--ok); } .warning { background:#fffaeb; color:var(--warn); }
+    .evidence { max-height:260px; overflow:auto; } .evidence article { padding:8px 0; border-bottom:1px solid #eef2f6; } .evidence small { color:var(--muted); } code { background:#f2f4f7; padding:2px 4px; border-radius:4px; }
+    @media(max-width:850px) { main { grid-template-columns:1fr; } .compose { position:static } .grid { grid-template-columns:1fr; } header { align-items:flex-start; flex-direction:column; } }
+  </style>
+</head>
+<body>
+  <header><div><h1>RepoPilot</h1><p>面向 Python 仓库的证据驱动、安全代码维护 Agent</p></div><span class="badge">本地执行 · 人工审批</span></header>
+  <main>
+    <section class="card compose">
+      <h2>创建代码任务</h2><p class="hint">粘贴 Issue、报错或修复目标。系统先检索并提出建议，不会直接修改仓库。</p>
+      <label for="issue">Issue / 报错描述</label><textarea id="issue" placeholder="例如：订单分页接口在 page=1、page_size=10 时漏掉第一条记录，请定位并修复。"></textarea>
+      <div class="row"><div><label for="topk">检索数量</label><input id="topk" type="number" value="5" min="1" max="20"></div><div style="align-self:end"><button id="start" onclick="createTask()">开始分析</button></div></div>
+      <p id="message" class="notice"></p>
+    </section>
+    <section class="content">
+      <div id="empty" class="card empty"><b>准备处理代码任务</b>输入一个可复现的问题后，这里将展示计划、代码证据、补丁建议、测试与审查结果。</div>
+      <div id="workspace" class="card workspace">
+        <div class="topline"><div><h2 id="taskTitle">任务</h2><p id="taskId" class="hint" style="margin:4px 0 0"></p></div><span id="status" class="status">planning</span></div>
+        <div class="grid">
+          <section class="section"><h3>执行计划</h3><ol id="plan"></ol></section>
+          <section class="section"><h3>执行轨迹</h3><ul id="trace" class="timeline"></ul></section>
+          <section class="section"><h3>证据</h3><div id="evidence" class="evidence"></div></section>
+          <section class="section"><h3>补丁建议</h3><div id="proposal" class="hint">尚未生成安全补丁建议。</div></section>
+        </div>
+        <section id="diffBox" class="section" style="display:none;margin-top:15px"><h3>隔离工作区 Diff</h3><pre id="diff"></pre></section>
+        <section id="reviewBox" class="section" style="display:none;margin-top:15px"><h3>验证与审查</h3><pre id="review"></pre></section>
+        <div id="actions" class="actions"></div>
+      </div>
+    </section>
+  </main>
+  <script>
+    let task = null;
+    const $ = id => document.getElementById(id);
+    function flash(text, warning=false) { const el=$('message'); el.textContent=text; el.className='notice '+(warning?'warning':''); el.style.display='block'; }
+    async function request(url, options={}) { const res=await fetch(url, {headers:{'Content-Type':'application/json'},...options}); const data=await res.json(); if(!res.ok) throw new Error(data.detail||'请求失败'); return data; }
+    async function createTask(){ const issue=$('issue').value.trim(); if(issue.length<3) return flash('请先填写需要分析的问题。',true); $('start').disabled=true; flash('正在检索相关代码与测试…'); try { task=await request('/api/tasks',{method:'POST',body:JSON.stringify({issue,top_k:Number($('topk').value)})}); render(); flash('已生成计划与证据。若存在安全规则匹配的修复，会等待你的批准。'); } catch(e){flash(e.message,true)} finally {$('start').disabled=false} }
+    function render(){ if(!task)return; $('empty').style.display='none'; $('workspace').style.display='block'; $('taskTitle').textContent=task.issue; $('taskId').textContent='任务 ID：'+task.task_id; $('status').textContent=task.status; $('plan').innerHTML=task.plan.map(x=>`<li>${escapeHtml(x)}</li>`).join(''); $('trace').innerHTML=task.trace.map(x=>`<li><code>${escapeHtml(x.event)}</code></li>`).join(''); $('evidence').innerHTML=task.evidence.map(x=>`<article><b>${escapeHtml(x.kind)}</b><br><small>${escapeHtml(x.source)}</small></article>`).join('')||'<span class="hint">未找到证据</span>'; $('proposal').innerHTML=task.proposal.length?task.proposal.map(x=>`<b>${escapeHtml(x.path)}</b><p class="hint">${escapeHtml(x.reason)}</p>`).join(''):'尚未生成安全补丁建议。'; const actions=$('actions'); actions.innerHTML=''; if(task.status==='waiting_approval'){actions.append(button('批准并生成隔离 Diff',approve),button('拒绝建议',reject,'danger'));} if(task.workspace && task.status==='verifying'){actions.append(button('运行验证与审查',verify),button('查看 Markdown 报告',report,'secondary'));} if(task.review){$('reviewBox').style.display='block'; $('review').textContent=JSON.stringify(task.review,null,2); actions.append(button('查看 Markdown 报告',report,'secondary'));} }
+    function button(label, fn, kind=''){const b=document.createElement('button');b.textContent=label;b.className=kind;b.onclick=fn;return b}
+    async function approve(){try{const result=await request(`/api/tasks/${task.task_id}/approve`,{method:'POST'});task=result.task;$('diffBox').style.display='block';$('diff').textContent=result.diff;render();flash('补丁已在隔离工作区生成，原仓库没有被修改。请确认 Diff 后运行验证。');}catch(e){flash(e.message,true)}}
+    async function reject(){try{const result=await request(`/api/tasks/${task.task_id}/reject`,{method:'POST',body:JSON.stringify({reason:'Rejected from local dashboard'})});task=result.task;render();flash('已拒绝建议，没有修改任何代码。');}catch(e){flash(e.message,true)}}
+    async function verify(){try{const result=await request(`/api/tasks/${task.task_id}/verify`,{method:'POST',body:JSON.stringify({test_target:'tests'})});task=result.task;$('reviewBox').style.display='block';$('review').textContent=JSON.stringify({test:result.test,review:result.review},null,2);render();flash('验证完成，已生成审查结论。');}catch(e){flash(e.message,true)}}
+    async function report(){try{const result=await request(`/api/tasks/${task.task_id}/report`);$('reviewBox').style.display='block';$('review').textContent=result.markdown;}catch(e){flash(e.message,true)}}
+    function escapeHtml(s){return String(s).replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));}
+  </script>
+</body>
+</html>

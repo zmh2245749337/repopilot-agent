@@ -13,6 +13,7 @@ import sqlite3
 import subprocess
 import time
 import uuid
+from difflib import unified_diff
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -195,6 +196,23 @@ class TaskStore:
             row = conn.execute("SELECT payload FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
         return json.loads(row[0]) if row else None
 
+    def load(self, task_id: str) -> tuple[TaskState, EvidenceStore] | None:
+        """Restore a durable task into executable domain objects."""
+        payload = self.get(task_id)
+        if not payload:
+            return None
+        raw = payload["state"]
+        state = TaskState(
+            issue=raw["issue"], task_id=raw["task_id"], status=TaskStatus(raw["status"]),
+            plan=raw.get("plan", []), evidence_ids=raw.get("evidence_ids", []), trace=raw.get("trace", []),
+            proposal=[PatchOperation(**item) for item in raw.get("proposal", [])],
+            review=Review(**raw["review"]) if raw.get("review") else None,
+            workspace=raw.get("workspace"),
+        )
+        evidence = EvidenceStore()
+        evidence.items = [Evidence(**item) for item in payload.get("evidence", [])]
+        return state, evidence
+
 
 class RepoPilot:
     """Safe, deterministic Issue → evidence → approval → patch → review workflow."""
@@ -207,6 +225,32 @@ class RepoPilot:
 
     def _record(self, state: TaskState, evidence: Evidence) -> None:
         state.evidence_ids.append(self.evidence.add(evidence))
+
+    def resume(self, task_id: str) -> TaskState | None:
+        restored = self.tasks.load(task_id)
+        if not restored:
+            return None
+        state, self.evidence = restored
+        state.event("task.resumed")
+        self.tasks.save(state, self.evidence)
+        return state
+
+    def search_code(self, query: str, top_k: int = 5) -> list[dict]:
+        self.index.build()
+        return [{"score": round(score, 4), "path": chunk.path, "symbol": chunk.symbol,
+                 "kind": chunk.kind, "start_line": chunk.start_line, "end_line": chunk.end_line,
+                 "content": chunk.content}
+                for score, chunk in self.index.search(query, top_k)]
+
+    def read_file(self, relative_path: str, start_line: int | None = None, end_line: int | None = None) -> ToolResult:
+        path = (self.repo / relative_path).resolve()
+        if self.repo not in path.parents or not path.is_file():
+            return ToolResult(False, "unsafe_path", "Path must resolve inside the repository")
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        start, end = max(1, start_line or 1), min(len(lines), end_line or len(lines))
+        if end < start:
+            return ToolResult(False, "invalid_range", "end_line must not precede start_line")
+        return ToolResult(True, "file_read", "\n".join(lines[start - 1:end]))
 
     def analyze(self, issue: str, top_k: int = 5) -> TaskState:
         state = TaskState(issue=issue)
@@ -237,8 +281,11 @@ class RepoPilot:
         """Propose only a narrow, explainable pagination repair in the bundled demo."""
         candidates: Iterable[Evidence] = (self.evidence.items[item] for item in state.evidence_ids)
         for item in candidates:
-            if "page * page_size" in item.content:
-                state.proposal = [PatchOperation(item.source.split(":")[0], "page * page_size", "(page - 1) * page_size",
+            path = item.source.split(":")[0]
+            if path.startswith("tests/") or "/tests/" in path:
+                continue
+            if "offset = page * page_size" in item.content:
+                state.proposal = [PatchOperation(path, "offset = page * page_size", "offset = (page - 1) * page_size",
                                                  "Page numbering is one-based; first page must begin at offset zero.")]
                 state.status = TaskStatus.WAITING_APPROVAL
                 state.event("approval.required", proposed_files=[operation.path for operation in state.proposal])
@@ -286,6 +333,25 @@ class RepoPilot:
         state.status = TaskStatus.VERIFYING
         self.tasks.save(state, self.evidence)
         return ToolResult(True, "patch_applied", f"{', '.join(changed)} in {workspace}")
+
+    def reject_proposal(self, state: TaskState, reason: str = "Rejected by human reviewer") -> ToolResult:
+        if state.status != TaskStatus.WAITING_APPROVAL:
+            return ToolResult(False, "nothing_to_reject", "Task is not waiting for approval")
+        state.status = TaskStatus.CANCELLED
+        state.event("approval.rejected", reason=reason)
+        self.tasks.save(state, self.evidence)
+        return ToolResult(True, "proposal_rejected", reason)
+
+    def diff(self, state: TaskState) -> ToolResult:
+        if not state.workspace:
+            return ToolResult(False, "no_workspace", "Approve a proposal before requesting a diff")
+        workspace = Path(state.workspace).resolve()
+        pieces: list[str] = []
+        for operation in state.proposal:
+            original = (self.repo / operation.path).read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)
+            changed = (workspace / operation.path).read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)
+            pieces.extend(unified_diff(original, changed, fromfile=f"a/{operation.path}", tofile=f"b/{operation.path}"))
+        return ToolResult(True, "diff_ready", "".join(pieces) or "No changes")
 
     def review_task(self, state: TaskState, test_result: ToolResult) -> Review:
         state.status = TaskStatus.REVIEWING

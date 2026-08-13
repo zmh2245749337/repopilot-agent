@@ -1,69 +1,129 @@
-"""Optional FastAPI interface for the same durable RepoPilot workflow.
+"""Local FastAPI application for the evidence-grounded RepoPilot workflow."""
 
-Install with ``pip install -e '.[api]'`` before serving it with uvicorn.
-"""
-from __future__ import annotations
-
+import json
+from dataclasses import asdict
 from pathlib import Path
 
-from .core import RepoPilot
+from .core import RepoPilot, TaskState
+from .tools import create_registry
 
 
 def create_app(repo: str | Path):
     try:
         from fastapi import FastAPI, HTTPException
-        from fastapi.responses import StreamingResponse
-        from pydantic import BaseModel
+        from fastapi.middleware.cors import CORSMiddleware
+        from fastapi.responses import FileResponse, StreamingResponse
+        from pydantic import BaseModel, Field
     except ImportError as error:  # pragma: no cover - depends on optional extra
         raise RuntimeError("Install the API extra: pip install -e '.[api]'") from error
 
-    pilot = RepoPilot(Path(repo))
-    app = FastAPI(title="RepoPilot", version="0.2.0")
-    active: dict[str, object] = {}
+    root = Path(repo).resolve()
+    app = FastAPI(title="RepoPilot", description="Evidence-grounded repository engineering agent", version="0.3.0")
+    app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:8000", "http://127.0.0.1:8000"],
+                       allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+    active: dict[str, tuple[RepoPilot, TaskState]] = {}
+    web_root = Path(__file__).parent / "web"
 
     class TaskRequest(BaseModel):
-        issue: str
-        top_k: int = 5
+        issue: str = Field(min_length=3, max_length=8_000)
+        top_k: int = Field(default=5, ge=1, le=20)
+
+    class RejectionRequest(BaseModel):
+        reason: str = Field(default="Rejected by human reviewer", max_length=1_000)
+
+    class VerifyRequest(BaseModel):
+        test_target: str = Field(default="tests", max_length=300)
+
+    def task_view(pilot: RepoPilot, state: TaskState) -> dict:
+        return {
+            "task_id": state.task_id, "issue": state.issue, "status": state.status.value, "plan": state.plan,
+            "proposal": [asdict(item) for item in state.proposal], "trace": state.trace,
+            "review": asdict(state.review) if state.review else None,
+            "workspace": state.workspace,
+            "evidence": [asdict(pilot.evidence.items[item]) for item in state.evidence_ids],
+        }
+
+    def get_active(task_id: str) -> tuple[RepoPilot, TaskState]:
+        if task_id in active:
+            return active[task_id]
+        pilot = RepoPilot(root)
+        state = pilot.resume(task_id)
+        if not state:
+            raise HTTPException(status_code=404, detail="task not found")
+        active[task_id] = (pilot, state)
+        return pilot, state
+
+    @app.get("/")
+    def dashboard():
+        return FileResponse(web_root / "index.html")
+
+    @app.get("/health")
+    def health():
+        return {"status": "healthy", "repository": str(root), "mode": "local-only"}
+
+    @app.get("/api/tools")
+    def list_tools():
+        registry = create_registry(RepoPilot(root))
+        return {"tools": [{"name": tool.name, "risk": tool.risk} for tool in registry._tools.values()]}
 
     @app.post("/api/tasks")
     def create_task(request: TaskRequest):
+        pilot = RepoPilot(root)
         state = pilot.analyze(request.issue, request.top_k)
         pilot.propose_patch(state)
-        active[state.task_id] = state
-        return {"task_id": state.task_id, "status": state.status.value, "proposal": [item.__dict__ for item in state.proposal]}
+        active[state.task_id] = (pilot, state)
+        return task_view(pilot, state)
 
     @app.get("/api/tasks/{task_id}")
     def get_task(task_id: str):
-        saved = pilot.tasks.get(task_id)
-        if not saved:
-            raise HTTPException(status_code=404, detail="task not found")
-        return saved
-
-    @app.post("/api/tasks/{task_id}/approve")
-    def approve_task(task_id: str):
-        state = active.get(task_id)
-        if state is None:
-            raise HTTPException(status_code=409, detail="task must be resumed in this server session before approval")
-        result = pilot.apply_proposal(state)  # explicit API action is the human approval gate
-        return result.__dict__
-
-    @app.post("/api/tasks/{task_id}/verify")
-    def verify_task(task_id: str, test_target: str = "tests"):
-        state = active.get(task_id)
-        if state is None or not getattr(state, "workspace", None):
-            raise HTTPException(status_code=409, detail="approve the task in this server session before verification")
-        test_result = pilot.run_pytest(test_target, root=Path(state.workspace))
-        review = pilot.review_task(state, test_result)
-        return {"test": test_result.__dict__, "review": review.__dict__, "report": pilot.report(state)}
+        pilot, state = get_active(task_id)
+        return task_view(pilot, state)
 
     @app.get("/api/tasks/{task_id}/events")
     def task_events(task_id: str):
-        saved = pilot.tasks.get(task_id)
-        if not saved:
-            raise HTTPException(status_code=404, detail="task not found")
+        pilot, state = get_active(task_id)
+
         def stream():
-            for event in saved["state"]["trace"]:
-                yield f"event: {event['event']}\ndata: {event}\n\n"
+            for event in state.trace:
+                yield f"event: {event['event']}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
         return StreamingResponse(stream(), media_type="text/event-stream")
+
+    @app.post("/api/tasks/{task_id}/approve")
+    def approve_task(task_id: str):
+        pilot, state = get_active(task_id)
+        result = pilot.apply_proposal(state)
+        if not result.ok:
+            raise HTTPException(status_code=409, detail=result.content)
+        return {"result": asdict(result), "task": task_view(pilot, state), "diff": pilot.diff(state).content}
+
+    @app.post("/api/tasks/{task_id}/reject")
+    def reject_task(task_id: str, request: RejectionRequest):
+        pilot, state = get_active(task_id)
+        result = pilot.reject_proposal(state, request.reason)
+        if not result.ok:
+            raise HTTPException(status_code=409, detail=result.content)
+        return {"result": asdict(result), "task": task_view(pilot, state)}
+
+    @app.post("/api/tasks/{task_id}/verify")
+    def verify_task(task_id: str, request: VerifyRequest):
+        pilot, state = get_active(task_id)
+        if not state.workspace:
+            raise HTTPException(status_code=409, detail="approve the proposal before verification")
+        test_result = pilot.run_pytest(request.test_target, root=Path(state.workspace))
+        review = pilot.review_task(state, test_result)
+        return {"test": asdict(test_result), "review": asdict(review), "task": task_view(pilot, state)}
+
+    @app.get("/api/tasks/{task_id}/diff")
+    def task_diff(task_id: str):
+        pilot, state = get_active(task_id)
+        result = pilot.diff(state)
+        if not result.ok:
+            raise HTTPException(status_code=409, detail=result.content)
+        return {"diff": result.content}
+
+    @app.get("/api/tasks/{task_id}/report")
+    def task_report(task_id: str):
+        pilot, state = get_active(task_id)
+        return {"markdown": pilot.report(state)}
 
     return app
