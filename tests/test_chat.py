@@ -1,12 +1,15 @@
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from repopilot.chat import CodeRagAssistant, ConversationStore
+from repopilot.chat import CodeRagAssistant, ConversationStore, OpenAICompatibleResponder
 
 
 class FakeResponder:
     model = "test-model"
+    base_url = "https://open.bigmodel.cn/api/paas/v4"
 
     def answer(self, message, context, history):
         return "The evidence says list_orders is in [orders.py:1-3]."
@@ -14,6 +17,10 @@ class FakeResponder:
 
 class CodeRagAssistantTests(unittest.TestCase):
     def setUp(self):
+        self.model_env = patch.dict(os.environ, {
+            "REPOPILOT_MODEL_BASE_URL": "", "REPOPILOT_MODEL_NAME": "", "REPOPILOT_API_KEY": "",
+        })
+        self.model_env.start()
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         (self.root / "orders.py").write_text(
@@ -23,6 +30,7 @@ class CodeRagAssistantTests(unittest.TestCase):
 
     def tearDown(self):
         self.tmp.cleanup()
+        self.model_env.stop()
 
     def test_offline_answer_returns_grounded_citations(self):
         assistant = CodeRagAssistant(self.root)
@@ -54,10 +62,29 @@ class CodeRagAssistantTests(unittest.TestCase):
 
     def test_configured_responder_is_used_for_grounded_answer(self):
         assistant = CodeRagAssistant(self.root, responder=FakeResponder())
+        self.assertEqual(assistant.model_status()["status"], "configured")
+        self.assertEqual(assistant.model_status()["provider"], "zhipu")
         answer = assistant.ask("Where is list_orders?")
         self.assertEqual(answer.provider, "openai-compatible:test-model")
         self.assertFalse(answer.fallback)
         self.assertIn("orders.py", answer.answer)
+        self.assertEqual(assistant.model_status()["status"], "online")
+
+    def test_offline_model_status_never_exposes_credentials(self):
+        status = CodeRagAssistant(self.root, responder=None).model_status()
+        self.assertEqual(status, {"configured": False, "status": "offline",
+                                  "provider": "offline-evidence", "model": None})
+        self.assertNotIn("api_key", status)
+
+    def test_zhipu_payload_disables_thinking_and_bounds_output(self):
+        responder = OpenAICompatibleResponder(
+            "https://open.bigmodel.cn/api/paas/v4", "secret-not-serialized", "glm-4.7-flash", max_tokens=900
+        )
+        payload = responder._payload("ping", "synthetic evidence", [], stream=True)
+        self.assertEqual(payload["thinking"], {"type": "disabled"})
+        self.assertEqual(payload["max_tokens"], 900)
+        self.assertTrue(payload["stream"])
+        self.assertNotIn("api_key", payload)
 
     def test_offline_stream_emits_metadata_deltas_and_completion(self):
         assistant = CodeRagAssistant(self.root)

@@ -17,6 +17,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Callable, Iterator
 from urllib.error import URLError
+from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 from .core import CodeIndex
@@ -279,8 +280,17 @@ def expand_retrieval_query(query: str, intent: str) -> str:
 
 
 class OpenAICompatibleResponder:
-    def __init__(self, base_url: str, api_key: str, model: str, timeout_s: int = 30):
+    def __init__(self, base_url: str, api_key: str, model: str, timeout_s: int = 30, max_tokens: int = 1_200):
         self.base_url, self.api_key, self.model, self.timeout_s = base_url.rstrip("/"), api_key, model, timeout_s
+        self.max_tokens = max_tokens
+        self.is_zhipu = (urlparse(self.base_url).hostname or "").endswith("bigmodel.cn")
+
+    def _payload(self, message: str, context: str, history: list[dict[str, str]], stream: bool = False) -> dict:
+        payload = {"model": self.model, "temperature": 0.2, "max_tokens": self.max_tokens,
+                   "stream": stream, "messages": self._messages(message, context, history)}
+        if self.is_zhipu:
+            payload["thinking"] = {"type": "disabled"}
+        return payload
 
     def _messages(self, message: str, context: str, history: list[dict[str, str]]) -> list[dict[str, str]]:
         return [
@@ -300,7 +310,7 @@ class OpenAICompatibleResponder:
         )
 
     def answer(self, message: str, context: str, history: list[dict[str, str]]) -> str:
-        payload = {"model": self.model, "temperature": 0.2, "messages": self._messages(message, context, history)}
+        payload = self._payload(message, context, history)
         with urlopen(self._request(payload), timeout=self.timeout_s) as response:
             result = json.loads(response.read().decode("utf-8"))
         answer = result["choices"][0]["message"]["content"].strip()
@@ -309,7 +319,7 @@ class OpenAICompatibleResponder:
         return answer
 
     def stream_answer(self, message: str, context: str, history: list[dict[str, str]]) -> Iterator[str]:
-        payload = {"model": self.model, "temperature": 0.2, "stream": True, "messages": self._messages(message, context, history)}
+        payload = self._payload(message, context, history, stream=True)
         with urlopen(self._request(payload), timeout=self.timeout_s) as response:
             for raw in response:
                 line = raw.decode("utf-8").strip()
@@ -327,7 +337,11 @@ def responder_from_env() -> OpenAICompatibleResponder | None:
     base_url = os.getenv("REPOPILOT_MODEL_BASE_URL")
     api_key = os.getenv("REPOPILOT_API_KEY")
     model = os.getenv("REPOPILOT_MODEL_NAME")
-    return OpenAICompatibleResponder(base_url, api_key, model) if base_url and api_key and model else None
+    try:
+        max_tokens = min(max(int(os.getenv("REPOPILOT_MODEL_MAX_TOKENS", "1200")), 64), 4_096)
+    except ValueError:
+        max_tokens = 1_200
+    return OpenAICompatibleResponder(base_url, api_key, model, max_tokens=max_tokens) if base_url and api_key and model else None
 
 
 class CodeRagAssistant:
@@ -352,6 +366,7 @@ class CodeRagAssistant:
         self.retriever = HybridRetriever(index, embedding_provider_from_env())
         self.conversations = conversations or ConversationStore()
         self.responder = responder if responder is not None else responder_from_env()
+        self._model_state = "configured" if self.responder else "offline"
         self.tool_registry = CodeToolRegistry()
         descriptions = {
             "search_code": "Locate relevant code symbols and return grounded file/line citations.",
@@ -367,6 +382,15 @@ class CodeRagAssistant:
                 {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
                 lambda prepared, tool_name=name: self._run_registered_tool(tool_name, prepared),
             ))
+
+    def model_status(self) -> dict:
+        """Return safe runtime metadata without ever exposing credentials."""
+        if not self.responder:
+            return {"configured": False, "status": "offline", "provider": "offline-evidence", "model": None}
+        host = urlparse(getattr(self.responder, "base_url", "")).hostname or ""
+        provider = "zhipu" if host.endswith("bigmodel.cn") else "openai-compatible"
+        return {"configured": True, "status": self._model_state, "provider": provider,
+                "model": self.responder.model}
 
     def _prepare(self, message: str, conversation_id: str | None, top_k: int) -> PreparedTurn:
         previous = self.conversations.latest_user_message(conversation_id, self.repository_key)
@@ -401,9 +425,11 @@ class CodeRagAssistant:
             try:
                 answer = self.responder.answer(prepared.rewritten_query, grounded_context, prepared.history)
                 provider = f"openai-compatible:{self.responder.model}"
+                self._model_state = "online"
             except (URLError, TimeoutError, KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError):
                 answer, fallback = tool_result.output, True
                 provider = f"openai-compatible:{self.responder.model}"
+                self._model_state = "fallback"
         else:
             answer = tool_result.output
         self.conversations.append(prepared.conversation_id, "assistant", answer, self.repository_key,
@@ -444,6 +470,12 @@ class CodeRagAssistant:
                 parts.append(chunk)
                 yield "answer.delta", {"delta": chunk}
         answer = "".join(parts) or tool_result.output
+        if self.responder:
+            if parts and not fallback:
+                self._model_state = "online"
+            else:
+                fallback = True
+                self._model_state = "fallback"
         self.conversations.append(prepared.conversation_id, "assistant", answer, self.repository_key,
                                   [asdict(citation) for citation in prepared.citations])
         trace.append({"event": "answer.generated", "provider": provider, "fallback": fallback})

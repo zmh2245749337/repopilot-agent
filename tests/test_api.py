@@ -1,14 +1,20 @@
 import importlib.util
 import io
+import os
 import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from unittest.mock import patch
 
 
 @unittest.skipUnless(importlib.util.find_spec("fastapi"), "FastAPI optional dependency is not installed")
 class ApiWorkflowTests(unittest.TestCase):
     def setUp(self):
+        self.model_env = patch.dict(os.environ, {
+            "REPOPILOT_MODEL_BASE_URL": "", "REPOPILOT_MODEL_NAME": "", "REPOPILOT_API_KEY": "",
+        })
+        self.model_env.start()
         from fastapi.testclient import TestClient
         from repopilot.api import create_app
 
@@ -26,6 +32,7 @@ class ApiWorkflowTests(unittest.TestCase):
     def tearDown(self):
         self.client_context.__exit__(None, None, None)
         self.tmp.cleanup()
+        self.model_env.stop()
 
     def test_dashboard_and_approved_workflow(self):
         self.assertEqual(self.client.get("/").status_code, 200)
@@ -51,6 +58,10 @@ class ApiWorkflowTests(unittest.TestCase):
         self.assertIn("page * page_size", (self.root / "orders.py").read_text(encoding="utf-8"))
 
     def test_read_only_code_rag_chat_returns_citations(self):
+        model = self.client.get("/api/model")
+        self.assertEqual(model.status_code, 200)
+        self.assertFalse(model.json()["configured"])
+        self.assertNotIn("api_key", model.json())
         response = self.client.post("/api/chat", json={"message": "Where is list_orders implemented?"})
         self.assertEqual(response.status_code, 200)
         payload = response.json()

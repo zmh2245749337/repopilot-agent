@@ -42,15 +42,18 @@ flowchart LR
 
 即使配置了模型，系统提示也会约束模型：只能根据传入的仓库证据回答，必须引用文件行号，不得声称修改文件、运行命令或批准补丁。
 
-## 模型配置
+## 智谱 GLM-4.7-Flash 配置
 
-Code RAG Copilot 与 Planner 共用以下 OpenAI-compatible 配置：
+RepoPilot 已使用智谱 `glm-4.7-flash` 完成真实 API 连通验证。智谱接口兼容现有 Chat Completions 与 SSE 流式解析，因此 Code RAG Copilot 与 Planner 共用以下配置：
 
 ```powershell
-$env:REPOPILOT_MODEL_BASE_URL = "https://your-compatible-endpoint/v1"
-$env:REPOPILOT_MODEL_NAME = "your-model"
-$env:REPOPILOT_API_KEY = "your-api-key"
+& .\scripts\configure_zhipu.ps1
+python scripts/run_model_smoke.py
 ```
+
+配置脚本通过隐藏输入读取 Key，并写入当前 Windows 用户的环境变量；它不会创建包含 Key 的项目文件。`run_model_smoke.py` 只发送一次非流式合成连通测试文本，不读取或发送仓库代码。`GET /api/model` 只返回 `configured/status/provider/model`，不会返回 Key；产品问答仍使用 SSE 流式接口。模型成功回答后状态为 `online`，调用限流或异常并启用离线证据回答时为 `fallback`。
+
+对智谱端点，适配器会显式关闭 `thinking` 并限制单次输出，避免代码问答在思维链阶段长时间占用流式连接；其他 OpenAI-compatible 提供方不会收到智谱专用参数。
 
 可选的语义检索配置：
 
@@ -60,7 +63,7 @@ $env:REPOPILOT_EMBEDDING_MODEL = "your-embedding-model"
 $env:REPOPILOT_EMBEDDING_API_KEY = "your-api-key"
 ```
 
-不要把真实 Key 写入仓库或 `config.py`；请使用环境变量或本地未提交的 `.env` 文件。
+不要把真实 Key 写入仓库、`.env.example` 或 `config.py`；请使用本机环境变量、部署平台 Secret 或本地未提交的 `.env` 文件。发送真实 Code RAG 问题会把检索到的代码证据提交给所配置的模型提供方，应只对允许发送的仓库启用。
 
 ## API 示例
 

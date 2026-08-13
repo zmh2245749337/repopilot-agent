@@ -53,7 +53,7 @@ flowchart LR
 - **后端框架：** FastAPI + Uvicorn
 - **代码解析：** Python AST
 - **混合检索：** BM25 + 精确符号加权 + 可选 Embedding / RRF
-- **LLM：** OpenAI-compatible Chat Completions（可选）+ 离线证据回退
+- **LLM：** 智谱 GLM-4.7-Flash（OpenAI-compatible）+ 离线证据回退
 - **Agent 编排：** Intent Routing + Code Tool Registry + SSE 流式事件
 - **数据存储：** SQLite
 - **协议：** Model Context Protocol（MCP / stdio）
