@@ -50,7 +50,16 @@ flowchart LR
 
 ## 技术栈
 
-Python 3.10+ · FastAPI · pytest · SQLite · AST · BM25 · Git worktree · MCP · GitHub Actions
+- **后端框架：** FastAPI + Uvicorn
+- **代码解析：** Python AST
+- **混合检索：** BM25 + 精确符号加权 + 可选 Embedding / RRF
+- **LLM：** OpenAI-compatible Chat Completions（可选）+ 离线证据回退
+- **Agent 编排：** Intent Routing + Code Tool Registry + SSE 流式事件
+- **数据存储：** SQLite
+- **协议：** Model Context Protocol（MCP / stdio）
+- **隔离执行：** Git worktree / 隔离副本 + 人工审批
+- **测试评估：** pytest + RAG Eval + GitHub Actions
+- **前端：** HTML + JavaScript（无框架）
 
 ## 真实边界
 

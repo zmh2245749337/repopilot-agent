@@ -34,6 +34,19 @@ flowchart LR
 - 真实 MCP Server：向外部 Agent 暴露基础仓库工具，以及代码问答、摘要、依赖、测试建议和安全扫描工具。
 - 三个可复现的受控 Bug 演示；默认不依赖 API Key 或大模型。
 
+## 技术栈
+
+- **后端框架：** FastAPI + Uvicorn
+- **代码解析：** Python AST
+- **混合检索：** BM25 + 精确符号加权 + 可选 Embedding / RRF
+- **LLM：** OpenAI-compatible Chat Completions（可选）+ 离线证据回退
+- **Agent 编排：** Intent Routing + Code Tool Registry + SSE 流式事件
+- **数据存储：** SQLite
+- **协议：** Model Context Protocol（MCP / stdio）
+- **隔离执行：** Git worktree / 隔离副本 + 人工审批
+- **测试评估：** pytest + RAG Eval + GitHub Actions
+- **前端：** HTML + JavaScript（无框架）
+
 ## 快速开始
 
 要求 Python 3.10+。
