@@ -1,5 +1,7 @@
 # RepoPilot
 
+[![Verify RepoPilot](https://github.com/zmh2245749337/repopilot-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/zmh2245749337/repopilot-agent/actions/workflows/ci.yml)
+
 面向 Python 仓库的证据驱动、安全代码维护 Agent。它将 Issue、报错或小范围修复需求转化为可追溯任务：检索代码与测试、记录证据、提出最小补丁、等待人工批准、在隔离工作区执行、验证测试并生成审查结论。
 
 > RepoPilot 是受控的本地代码维护 Agent，不是无人值守的通用代码生成器。它绝不会直接改动目标仓库。
@@ -86,3 +88,5 @@ python -m repopilot.mcp_server.server
 | 路径穿越 | Issue 与风险定位演示 |
 
 当前版本仅分析 Python，并且只对三个受控案例给出确定性补丁；其他问题只生成证据，不会臆造修改。配置 `REPOPILOT_MODEL_*` 后，Planner 会使用 OpenAI-compatible `/chat/completions` 输出结构化计划；配置 `REPOPILOT_EMBEDDING_*` 后，检索会融合 `/embeddings` 语义排序。网络或模型异常时会自动回退到离线计划和词法检索。运行 `python scripts/run_controlled_eval.py` 可生成三案例评估结果。详见 [架构说明](docs/ARCHITECTURE.md)、[MCP 使用说明](docs/MCP.md) 和 [限制说明](docs/LIMITATIONS.md)。
+
+每次推送与面向 `main` 的 Pull Request 都会自动执行单元/API 测试和三案例的受控评估；评估报告必须可重复生成且没有差异。
