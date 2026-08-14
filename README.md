@@ -88,6 +88,12 @@ python scripts/run_model_smoke.py
 
 Smoke Test 只发送一次非流式合成测试语句，不会上传仓库代码或持续消耗免费模型额度。产品问答仍使用 SSE 流式接口；启动服务后，界面模型标签会依次显示 `configured`、真实调用成功后的 `online`，或限流/异常回退时的 `fallback`。
 
+## 产品演示
+
+下图是 RepoPilot 对公开仓库代码进行真实 GLM-4.7-Flash Code RAG 问答的结果：回答附带文件与行号引用，界面同时展示模型 `online` 状态和可观察的 Agent 工具目录。
+
+![RepoPilot GLM-4.7-Flash Code RAG online demo](docs/assets/code-rag-glm-online.png)
+
 聊天接口为 `POST /api/chat`，流式接口为 `POST /api/chat/stream`；传入 `message`、可选 `conversation_id` 和 `top_k`。响应包含回答、引用、模型提供方、回退标记、意图、工具路由和 Agent 轨迹。`/api/conversations` 提供按当前仓库隔离的持久化历史，`/api/chat/tools` 提供工具 Schema。该接口始终只读，不能创建、批准或应用补丁。
 
 仪表盘还支持隔离导入公开 GitHub 仓库或 ZIP：GitHub 仅接受 `https://github.com/owner/repo`，ZIP 会限制大小、文件数、解压大小，并拦截路径穿越。导入后可浏览文件树，点击聊天引用预览源代码；导入副本不会覆盖本地仓库。
