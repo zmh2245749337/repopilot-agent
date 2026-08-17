@@ -53,7 +53,8 @@ class CodeIndex:
     def build(self) -> int:
         self.chunks.clear()
         for path in sorted(self.root.rglob("*.py")):
-            if any(part.startswith(".") or part in {"__pycache__", ".venv"} for part in path.parts):
+            relative_path = path.relative_to(self.root)
+            if any(part.startswith(".") or part in {"__pycache__", ".venv"} for part in relative_path.parts):
                 continue
             source = path.read_text(encoding="utf-8", errors="replace")
             try:

@@ -21,7 +21,7 @@
     </aside>
     <section class="card chat">
       <div class="chat-head"><div><h2>💬 代码问答</h2><p class="hint">RepoPilot 会先检索代码，再给出带文件和行号的回答。</p></div><span id="model" class="status">正在检查模型…</span></div>
-      <div class="quick"><button onclick="preset('请总结当前仓库的 README.md 和 docs/ARCHITECTURE.md：RepoPilot 是做什么的，有哪些核心功能？')">这个项目做什么？</button><button onclick="preset('请定位当前仓库的代码检索核心实现，并解释检索流程。')">代码检索在哪里？</button><button onclick="preset('请列出当前仓库可用的 Agent 工具，并说明分别用于什么。')">有哪些 Agent 工具？</button><button onclick="preset('请检查当前仓库的安全风险，并给出不修改代码的建议。')">安全风险检查</button></div>
+      <div class="quick"><button onclick="preset('请根据当前仓库的 Python 源码，概括它的主要功能和核心模块，并引用实际 .py 文件。')">这个项目做什么？</button><button onclick="preset('请定位当前仓库的代码检索核心实现，并解释检索流程。')">代码检索在哪里？</button><button onclick="preset('请列出当前仓库可用的 Agent 工具，并说明分别用于什么。')">有哪些 Agent 工具？</button><button onclick="preset('请检查当前仓库的安全风险，并给出不修改代码的建议。')">安全风险检查</button></div>
       <div id="log" class="log"><div class="bubble assistant">你好，我是 RepoPilot。先在左侧选择代码仓库，再问我“这个项目做什么”“某个函数在哪里”或“有哪些安全风险”。</div></div>
       <div class="compose"><div class="row"><textarea id="question" placeholder="例如：CodeToolRegistry 在哪里实现？请说明它注册了哪些工具。"></textarea><button id="ask" onclick="ask()">提问</button></div></div>
     </section>
