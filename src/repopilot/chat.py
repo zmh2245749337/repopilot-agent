@@ -234,7 +234,15 @@ class ConversationStore:
 
 def classify_intent(message: str) -> str:
     lowered = message.lower()
+    compact = re.sub(r"[\s,.，。!！?？]+", "", lowered)
+    if compact in {"你好", "您好", "嗨", "hello", "hi", "在吗", "谢谢", "感谢", "再见", "bye"}:
+        return "direct_answer"
+    if compact in {"你能干嘛", "你能做什么", "你会什么", "怎么用", "如何使用", "帮助", "help"}:
+        return "direct_answer"
     if any(word in lowered for word in ("总结", "概览", "summary", "summarize", "overview")):
+        return "repository_summary"
+    if any(phrase in message for phrase in ("这个项目", "当前项目", "这个仓库", "当前仓库", "该仓库")) and \
+            any(word in message for word in ("做什么", "功能", "用途", "架构", "模块", "作用")):
         return "repository_summary"
     if any(word in lowered for word in ("依赖", "调用", "导入", "import", "depends", "dependency", "call graph")):
         return "dependency_lookup"
@@ -242,7 +250,7 @@ def classify_intent(message: str) -> str:
         return "test_guidance"
     if any(word in lowered for word in ("安全", "风险", "漏洞", "security", "risk", "injection", "traversal")):
         return "safety_review"
-    if any(word in lowered for word in ("函数", "function", "解释", "怎么实现", "what does", "explain")):
+    if any(word in lowered for word in ("函数", "模块", "function", "解释", "怎么实现", "what does", "explain")):
         return "function_summary"
     if any(word in lowered for word in ("在哪", "位置", "where", "locate", "哪个文件")):
         return "code_location"
@@ -373,6 +381,7 @@ class CodeRagAssistant:
     """Hybrid retrieval, bounded read-only tools, and optional grounded LLM."""
 
     TOOL_BY_INTENT = {
+        "direct_answer": "direct_answer",
         "repository_summary": "summarize_repository",
         "dependency_lookup": "locate_dependencies",
         "test_guidance": "suggest_tests",
@@ -423,6 +432,16 @@ class CodeRagAssistant:
         intent = classify_intent(message)
         tool = self.TOOL_BY_INTENT[intent]
         conversation_id = self.conversations.append(conversation_id, "user", message, self.repository_key)
+        if intent == "direct_answer":
+            trace = [
+                {"event": "intent.classified", "intent": intent},
+                {"event": "query.rewritten", "applied": False, "query": message},
+                {"event": "tool.selected", "tool": tool, "risk": "none"},
+                {"event": "retrieval.skipped", "reason": "general_conversation"},
+            ]
+            return PreparedTurn(conversation_id, intent, tool, message, [],
+                                "Direct conversation; repository retrieval was not needed.", trace,
+                                self.conversations.history(conversation_id)[:-1])
         retrieval_query = expand_retrieval_query(rewritten_query, intent)
         retrieved = self.retriever.search(retrieval_query, top_k=top_k)
         citations = [Citation(item.chunk.path, item.chunk.symbol, item.chunk.start_line, item.chunk.end_line,
@@ -441,12 +460,14 @@ class CodeRagAssistant:
 
     def ask(self, message: str, conversation_id: str | None = None, top_k: int = 4) -> ChatAnswer:
         prepared = self._prepare(message, conversation_id, top_k)
-        tool_result = self.tool_registry.execute(prepared.tool, prepared)
+        tool_result = self._execute_tool(prepared)
         trace = [*prepared.trace, {"event": "tool.completed", "tool": tool_result.name,
                                    "duration_ms": tool_result.duration_ms, **tool_result.metadata}]
         grounded_context = f"{prepared.context}\n\nRead-only tool analysis:\n{tool_result.output}"
         provider, fallback = "offline-evidence", False
-        if self.responder:
+        if prepared.intent == "direct_answer":
+            answer, provider = tool_result.output, "local-direct-answer"
+        elif self.responder:
             try:
                 answer = self.responder.answer(prepared.rewritten_query, grounded_context, prepared.history)
                 provider = f"openai-compatible:{self.responder.model}"
@@ -466,7 +487,7 @@ class CodeRagAssistant:
     def stream(self, message: str, conversation_id: str | None = None, top_k: int = 4) -> Iterator[tuple[str, dict]]:
         """Yield SSE-friendly metadata and answer deltas; model responses stream token-by-token."""
         prepared = self._prepare(message, conversation_id, top_k)
-        tool_result = self.tool_registry.execute(prepared.tool, prepared)
+        tool_result = self._execute_tool(prepared)
         trace = [*prepared.trace, {"event": "tool.completed", "tool": tool_result.name,
                                    "duration_ms": tool_result.duration_ms, **tool_result.metadata}]
         grounded_context = f"{prepared.context}\n\nRead-only tool analysis:\n{tool_result.output}"
@@ -476,7 +497,11 @@ class CodeRagAssistant:
                        "trace": trace, "tool_result": asdict(tool_result)}
         try:
             chunks: Iterator[str]
-            if self.responder:
+            if prepared.intent == "direct_answer":
+                provider = "local-direct-answer"
+                text = tool_result.output
+                chunks = (text[index:index + 28] for index in range(0, len(text), 28))
+            elif self.responder:
                 provider = f"openai-compatible:{self.responder.model}"
                 chunks = self.responder.stream_answer(prepared.rewritten_query, grounded_context, prepared.history)
             else:
@@ -495,7 +520,7 @@ class CodeRagAssistant:
                 parts.append(chunk)
                 yield "answer.delta", {"delta": chunk}
         answer = "".join(parts) or tool_result.output
-        if self.responder:
+        if self.responder and prepared.intent != "direct_answer":
             if parts and not fallback:
                 self._model_state = "online"
             else:
@@ -507,6 +532,17 @@ class CodeRagAssistant:
         yield "complete", {"conversation_id": prepared.conversation_id, "provider": provider, "fallback": fallback,
                            "citations": [asdict(c) for c in prepared.citations], "trace": trace,
                            "tool_result": asdict(tool_result)}
+
+    def _execute_tool(self, prepared: PreparedTurn) -> CodeToolResult:
+        if prepared.tool == "direct_answer":
+            return CodeToolResult("direct_answer", self._direct_answer(), 0, {"risk": "none", "citations": 0})
+        return self.tool_registry.execute(prepared.tool, prepared)
+
+    @staticmethod
+    def _direct_answer() -> str:
+        return ("你好，我是 RepoPilot。\n\n"
+                "我可以帮你导入代码仓库，并回答代码位置、模块逻辑、依赖关系、测试建议和安全风险。\n\n"
+                "你可以试着问：‘这个项目做什么？’或‘某个函数在哪里实现？’")
 
     def _run_registered_tool(self, tool_name: str, prepared: PreparedTurn) -> str:
         if not prepared.citations:

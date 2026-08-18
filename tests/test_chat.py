@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 from urllib.error import HTTPError
 
-from repopilot.chat import CodeRagAssistant, ConversationStore, OpenAICompatibleResponder
+from repopilot.chat import CodeRagAssistant, ConversationStore, OpenAICompatibleResponder, classify_intent
 
 
 class FakeResponder:
@@ -41,6 +41,20 @@ class CodeRagAssistantTests(unittest.TestCase):
         self.assertEqual(answer.citations[0].path, "orders.py")
         self.assertIn("list_orders", answer.answer)
         self.assertEqual(answer.trace[0]["event"], "intent.classified")
+
+    def test_greeting_uses_direct_answer_without_code_retrieval(self):
+        assistant = CodeRagAssistant(self.root)
+        answer = assistant.ask("你好")
+        self.assertEqual(answer.intent, "direct_answer")
+        self.assertEqual(answer.provider, "local-direct-answer")
+        self.assertFalse(answer.fallback)
+        self.assertEqual(answer.citations, [])
+        self.assertIn("我是 RepoPilot", answer.answer)
+        self.assertIn("retrieval.skipped", [event["event"] for event in answer.trace])
+
+    def test_project_and_module_questions_route_to_useful_intents(self):
+        self.assertEqual(classify_intent("这个项目主要做什么？"), "repository_summary")
+        self.assertEqual(classify_intent("详细解释这个模块"), "function_summary")
 
     def test_conversation_store_keeps_multi_turn_history(self):
         store = ConversationStore()
