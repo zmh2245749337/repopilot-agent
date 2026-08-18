@@ -239,6 +239,11 @@ def classify_intent(message: str) -> str:
         return "direct_answer"
     if compact in {"你能干嘛", "你能做什么", "你会什么", "怎么用", "如何使用", "帮助", "help"}:
         return "direct_answer"
+    if ("学习" in message or "怎么学" in message or "如何学" in message) and \
+            any(word in lowered for word in ("agent", "智能体", "rag", "大模型")):
+        return "direct_answer"
+    if any(phrase in message for phrase in ("为什么不生成", "为啥不生成", "为什么没有生成", "你为啥不生成")):
+        return "direct_answer"
     if any(word in lowered for word in ("总结", "概览", "summary", "summarize", "overview")):
         return "repository_summary"
     if any(phrase in message for phrase in ("这个项目", "当前项目", "这个仓库", "当前仓库", "该仓库")) and \
@@ -535,11 +540,23 @@ class CodeRagAssistant:
 
     def _execute_tool(self, prepared: PreparedTurn) -> CodeToolResult:
         if prepared.tool == "direct_answer":
-            return CodeToolResult("direct_answer", self._direct_answer(), 0, {"risk": "none", "citations": 0})
+            return CodeToolResult("direct_answer", self._direct_answer(prepared.rewritten_query), 0,
+                                  {"risk": "none", "citations": 0})
         return self.tool_registry.execute(prepared.tool, prepared)
 
     @staticmethod
-    def _direct_answer() -> str:
+    def _direct_answer(message: str) -> str:
+        lowered = message.lower()
+        if ("学习" in message or "怎么学" in message or "如何学" in message) and \
+                any(word in lowered for word in ("agent", "智能体", "rag", "大模型")):
+            return ("学习 Agent，建议先把你正在用的 RepoPilot 当作主线，而不是同时堆很多概念。\n\n"
+                    "1. 先会用：导入一个仓库，分别问项目概览、模块解释、依赖、测试和安全问题。\n"
+                    "2. 再理解链路：问题路由 → 代码检索（RAG）→ 组织上下文 → GLM 生成 → 文件行号引用。\n"
+                    "3. 再读源码：优先阅读 chat.py、retrieval.py、core.py 和 api.py。\n"
+                    "4. 最后练表达：能用自己的话解释为什么要检索、为什么要引用、模型不可用如何降级。")
+        if any(phrase in message for phrase in ("为什么不生成", "为啥不生成", "为什么没有生成", "你为啥不生成")):
+            return ("模型没有生成内容，通常是模型服务临时拥堵或请求被限流。RepoPilot 会先短暂重试；仍失败时才切换为本地证据回答。\n\n"
+                    "你可以看右侧执行轨迹的 fallback 字段：false 表示本轮由 GLM 生成，true 表示本轮使用本地兜底。")
         return ("你好，我是 RepoPilot。\n\n"
                 "我可以帮你导入代码仓库，并回答代码位置、模块逻辑、依赖关系、测试建议和安全风险。\n\n"
                 "你可以试着问：‘这个项目做什么？’或‘某个函数在哪里实现？’")

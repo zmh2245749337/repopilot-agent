@@ -55,6 +55,7 @@ class CodeRagAssistantTests(unittest.TestCase):
     def test_project_and_module_questions_route_to_useful_intents(self):
         self.assertEqual(classify_intent("这个项目主要做什么？"), "repository_summary")
         self.assertEqual(classify_intent("详细解释这个模块"), "function_summary")
+        self.assertEqual(classify_intent("我怎么详细学习 Agent"), "direct_answer")
 
     def test_conversation_store_keeps_multi_turn_history(self):
         store = ConversationStore()
