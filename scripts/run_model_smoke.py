@@ -25,8 +25,20 @@ def main() -> None:
         )
     except HTTPError as error:
         reason = "rate_limited" if error.code == 429 else "provider_http_error"
+        detail: dict[str, object] = {}
+        try:
+            payload = json.loads(error.read().decode("utf-8", errors="replace"))
+            provider_error = payload.get("error", {}) if isinstance(payload, dict) else {}
+            if isinstance(provider_error, dict):
+                if provider_error.get("code") is not None:
+                    detail["provider_code"] = provider_error["code"]
+                if provider_error.get("message"):
+                    detail["provider_message"] = str(provider_error["message"])[:300]
+        except (json.JSONDecodeError, OSError, ValueError):
+            pass
         print(json.dumps({"connected": False, "model": responder.model,
-                          "http_status": error.code, "reason": reason}, indent=2))
+                          "http_status": error.code, "reason": reason, **detail},
+                         ensure_ascii=False, indent=2))
         raise SystemExit(2) from None
     except (URLError, TimeoutError):
         print(json.dumps({"connected": False, "model": responder.model,
