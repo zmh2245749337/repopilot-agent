@@ -297,7 +297,9 @@ class OpenAICompatibleResponder:
             {"role": "system", "content": (
                 "You are RepoPilot's read-only code assistant. Answer only from supplied repository evidence. "
                 "Do not claim to edit files, run commands, approve patches, or know facts outside the evidence. "
-                "Cite relevant files as [path:start-end]. If evidence is insufficient, say so."
+                "The interface adds file-and-line citations automatically, so do not repeat a source list or "
+                "bracket citations in the answer text. You may name a file only when it helps explain the code. "
+                "If evidence is insufficient, say so."
             )},
             *history[-6:],
             {"role": "user", "content": f"Question:\n{message}\n\nRepository evidence:\n{context}"},
@@ -484,28 +486,27 @@ class CodeRagAssistant:
                            "tool_result": asdict(tool_result)}
 
     def _run_registered_tool(self, tool_name: str, prepared: PreparedTurn) -> str:
-        references = ", ".join(f"[{c.path}:{c.start_line}-{c.end_line}]" for c in prepared.citations[:3])
         if not prepared.citations:
             return "没有找到可引用的代码证据。请提供函数名、文件名、报错信息或测试名，以便重新检索。"
         if tool_name == "summarize_function":
             lead = prepared.citations[0]
-            return f"函数/符号 `{lead.symbol}` 位于 `{lead.path}` 第 {lead.start_line}-{lead.end_line} 行。它的实现已作为证据返回；建议结合其调用方和测试一起阅读。来源：{references}"
+            return f"函数/符号 `{lead.symbol}` 位于 `{lead.path}` 第 {lead.start_line}-{lead.end_line} 行。它的实现已作为证据返回；建议结合其调用方和测试一起阅读。"
         if tool_name == "locate_dependencies":
             imports = self._imports_for(prepared.citations[0].path)
-            return f"与问题最相关的实现是 `{prepared.citations[0].symbol}`。文件 `{prepared.citations[0].path}` 导入了：{', '.join(imports) or '未发现显式导入'}。来源：{references}"
+            return f"与问题最相关的实现是 `{prepared.citations[0].symbol}`。文件 `{prepared.citations[0].path}` 导入了：{', '.join(imports) or '未发现显式导入'}。"
         if tool_name == "suggest_tests":
             tests = sorted({citation.path for citation in prepared.citations if '/test' in citation.path or citation.path.startswith('tests/')})
             tests = tests or sorted(path.relative_to(self.root).as_posix() for path in self.root.rglob('test_*.py'))[:5]
-            return f"建议优先运行与检索结果相同范围的 pytest 目标：{', '.join(tests) or 'tests'}。若要进入修复流程，该目标必须先在原仓库失败。来源：{references}"
+            return f"建议优先运行与检索结果相同范围的 pytest 目标：{', '.join(tests) or 'tests'}。若要进入修复流程，该目标必须先在原仓库失败。"
         if tool_name == "scan_safety":
             findings = self._safety_findings()
             rendered = "; ".join(findings[:4]) or "未命中内置高风险模式"
-            return f"静态安全扫描结果：{rendered}。这只是只读初筛，仍应人工审查数据流。相关代码来源：{references}"
+            return f"静态安全扫描结果：{rendered}。这只是只读初筛，仍应人工审查数据流。"
         if tool_name == "summarize_repository":
             symbols = ", ".join(f"`{citation.symbol}`" for citation in prepared.citations[:4])
-            return f"与该概览最相关的仓库单元是 {symbols}。这些是基于当前检索得到的局部概览，而不是未经证据支持的全仓库结论。来源：{references}"
+            return f"与该概览最相关的仓库单元是 {symbols}。这些是基于当前检索得到的局部概览，而不是未经证据支持的全仓库结论。"
         lead = prepared.citations[0]
-        return f"最强匹配是 `{lead.symbol}`，位于 `{lead.path}` 第 {lead.start_line}-{lead.end_line} 行。回答基于这些检索到的代码来源：{references}"
+        return f"最强匹配是 `{lead.symbol}`，位于 `{lead.path}` 第 {lead.start_line}-{lead.end_line} 行。"
 
     def _imports_for(self, relative_path: str) -> list[str]:
         path = self.root / relative_path
