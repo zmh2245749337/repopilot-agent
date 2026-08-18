@@ -16,7 +16,7 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Callable, Iterator
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
@@ -285,6 +285,13 @@ class OpenAICompatibleResponder:
         self.max_tokens = max_tokens
         self.is_zhipu = (urlparse(self.base_url).hostname or "").endswith("bigmodel.cn")
 
+    @staticmethod
+    def _retry_count() -> int:
+        try:
+            return min(max(int(os.getenv("REPOPILOT_MODEL_RETRIES", "2")), 0), 3)
+        except ValueError:
+            return 2
+
     def _payload(self, message: str, context: str, history: list[dict[str, str]], stream: bool = False) -> dict:
         payload = {"model": self.model, "temperature": 0.2, "max_tokens": self.max_tokens,
                    "stream": stream, "messages": self._messages(message, context, history)}
@@ -297,6 +304,10 @@ class OpenAICompatibleResponder:
             {"role": "system", "content": (
                 "You are RepoPilot's read-only code assistant. Answer only from supplied repository evidence. "
                 "Do not claim to edit files, run commands, approve patches, or know facts outside the evidence. "
+                "Reply in the same language as the question. Give a direct conclusion first, then explain the "
+                "important code flow or module relationship in clear short sections. Treat a Previous question and "
+                "Follow-up in the user message as one connected conversation. Do not merely repeat the top retrieved "
+                "symbol or say that evidence was returned. "
                 "The interface adds file-and-line citations automatically, so do not repeat a source list or "
                 "bracket citations in the answer text. You may name a file only when it helps explain the code. "
                 "If evidence is insufficient, say so."
@@ -311,9 +322,21 @@ class OpenAICompatibleResponder:
             headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}, method="POST",
         )
 
+    def _open(self, payload: dict):
+        """Retry transient provider capacity errors before falling back to local evidence."""
+        retries = self._retry_count()
+        for attempt in range(retries + 1):
+            try:
+                return urlopen(self._request(payload), timeout=self.timeout_s)
+            except HTTPError as error:
+                if error.code != 429 or attempt >= retries:
+                    raise
+                time.sleep(1 + attempt)
+        raise RuntimeError("unreachable model retry state")
+
     def answer(self, message: str, context: str, history: list[dict[str, str]]) -> str:
         payload = self._payload(message, context, history)
-        with urlopen(self._request(payload), timeout=self.timeout_s) as response:
+        with self._open(payload) as response:
             result = json.loads(response.read().decode("utf-8"))
         answer = result["choices"][0]["message"]["content"].strip()
         if not answer:
@@ -322,7 +345,7 @@ class OpenAICompatibleResponder:
 
     def stream_answer(self, message: str, context: str, history: list[dict[str, str]]) -> Iterator[str]:
         payload = self._payload(message, context, history, stream=True)
-        with urlopen(self._request(payload), timeout=self.timeout_s) as response:
+        with self._open(payload) as response:
             for raw in response:
                 line = raw.decode("utf-8").strip()
                 if not line.startswith("data:"):

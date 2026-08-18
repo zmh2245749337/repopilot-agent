@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from urllib.error import HTTPError
 
 from repopilot.chat import CodeRagAssistant, ConversationStore, OpenAICompatibleResponder
 
@@ -85,6 +86,25 @@ class CodeRagAssistantTests(unittest.TestCase):
         self.assertEqual(payload["max_tokens"], 900)
         self.assertTrue(payload["stream"])
         self.assertNotIn("api_key", payload)
+
+    def test_model_retries_a_transient_rate_limit_before_succeeding(self):
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return b'{"choices":[{"message":{"content":"REPOPILOT_GLM_OK"}}]}'
+
+        responder = OpenAICompatibleResponder("https://open.bigmodel.cn/api/paas/v4", "test-key", "glm-test")
+        limited = HTTPError("https://example.test", 429, "busy", None, None)
+        with patch("repopilot.chat.urlopen", side_effect=[limited, Response()]) as open_call, \
+                patch("repopilot.chat.time.sleep") as sleep:
+            self.assertEqual(responder.answer("ping", "synthetic", []), "REPOPILOT_GLM_OK")
+        self.assertEqual(open_call.call_count, 2)
+        sleep.assert_called_once_with(1)
 
     def test_offline_stream_emits_metadata_deltas_and_completion(self):
         assistant = CodeRagAssistant(self.root)
