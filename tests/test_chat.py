@@ -16,6 +16,11 @@ class FakeResponder:
         return "The evidence says list_orders is in [orders.py:1-3]."
 
 
+class SemanticFakeResponder(FakeResponder):
+    def route(self, message, previous=None):
+        return {"intent": "repository_summary", "retrieval_query": "repository architecture main modules"}
+
+
 class CodeRagAssistantTests(unittest.TestCase):
     def setUp(self):
         self.model_env = patch.dict(os.environ, {
@@ -85,6 +90,14 @@ class CodeRagAssistantTests(unittest.TestCase):
         self.assertFalse(answer.fallback)
         self.assertIn("orders.py", answer.answer)
         self.assertEqual(assistant.model_status()["status"], "online")
+
+    def test_semantic_router_can_upgrade_an_ambiguous_question(self):
+        assistant = CodeRagAssistant(self.root, responder=SemanticFakeResponder())
+        answer = assistant.ask("这个代码主要是做啥的")
+        self.assertEqual(answer.intent, "repository_summary")
+        self.assertTrue(next(event for event in answer.trace if event["event"] == "semantic_router.completed")
+                        ["used_model_query"])
+        self.assertIn("orders.py", answer.answer)
 
     def test_offline_model_status_never_exposes_credentials(self):
         status = CodeRagAssistant(self.root, responder=None).model_status()

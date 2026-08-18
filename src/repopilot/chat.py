@@ -24,6 +24,12 @@ from .core import CodeIndex
 from .retrieval import HybridRetriever, embedding_provider_from_env
 
 
+MODEL_ROUTABLE_INTENTS = {
+    "direct_answer", "repository_summary", "dependency_lookup", "test_guidance",
+    "safety_review", "function_summary", "code_location", "code_question",
+}
+
+
 @dataclass(frozen=True)
 class Citation:
     path: str
@@ -335,6 +341,33 @@ class OpenAICompatibleResponder:
             headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}, method="POST",
         )
 
+    def route(self, message: str, previous: str | None = None) -> dict[str, str]:
+        """Use a tiny model call to understand open-ended language before code retrieval."""
+        system = (
+            "You classify messages for a read-only code repository assistant. Return JSON only, with keys "
+            "intent and retrieval_query. intent must be exactly one of: direct_answer, repository_summary, "
+            "dependency_lookup, test_guidance, safety_review, function_summary, code_location, code_question. "
+            "Use direct_answer only for greetings, product usage questions, learning advice, or general chat. "
+            "For code questions, retrieval_query should preserve concrete file names, symbols, errors, and the "
+            "meaning of the follow-up. Do not answer the user."
+        )
+        previous_text = previous or "(none)"
+        user = f"Previous user question: {previous_text}\nCurrent message: {message}"
+        payload = {"model": self.model, "temperature": 0, "max_tokens": 180, "stream": False,
+                   "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
+        if self.is_zhipu:
+            payload["thinking"] = {"type": "disabled"}
+        with self._open(payload) as response:
+            result = json.loads(response.read().decode("utf-8"))
+        content = result["choices"][0]["message"]["content"].strip()
+        matched = re.search(r"\{.*\}", content, flags=re.DOTALL)
+        decision = json.loads(matched.group(0) if matched else content)
+        intent = str(decision.get("intent", "")).strip()
+        if intent not in MODEL_ROUTABLE_INTENTS:
+            raise ValueError("invalid semantic route")
+        query = str(decision.get("retrieval_query", "")).strip()
+        return {"intent": intent, "retrieval_query": query}
+
     def _open(self, payload: dict):
         """Retry transient provider capacity errors before falling back to local evidence."""
         retries = self._retry_count()
@@ -435,10 +468,23 @@ class CodeRagAssistant:
         previous = self.conversations.latest_user_message(conversation_id, self.repository_key)
         rewritten_query, rewritten = rewrite_follow_up(message, previous)
         intent = classify_intent(message)
+        semantic_event: dict | None = None
+        if self.responder and intent != "direct_answer" and hasattr(self.responder, "route"):
+            try:
+                decision = self.responder.route(message, previous)
+                intent = decision["intent"]
+                model_query = decision.get("retrieval_query", "").strip()
+                if model_query and intent != "direct_answer":
+                    rewritten_query, rewritten = model_query, model_query != message
+                semantic_event = {"event": "semantic_router.completed", "provider": self.responder.model,
+                                  "intent": intent, "used_model_query": bool(model_query)}
+            except (HTTPError, URLError, TimeoutError, KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError):
+                semantic_event = {"event": "semantic_router.fallback", "reason": "rule_router_used"}
         tool = self.TOOL_BY_INTENT[intent]
         conversation_id = self.conversations.append(conversation_id, "user", message, self.repository_key)
         if intent == "direct_answer":
             trace = [
+                *([semantic_event] if semantic_event else []),
                 {"event": "intent.classified", "intent": intent},
                 {"event": "query.rewritten", "applied": False, "query": message},
                 {"event": "tool.selected", "tool": tool, "risk": "none"},
@@ -452,6 +498,7 @@ class CodeRagAssistant:
         citations = [Citation(item.chunk.path, item.chunk.symbol, item.chunk.start_line, item.chunk.end_line,
                               item.channels, item.chunk.content[:1_200]) for item in retrieved]
         trace = [
+            *([semantic_event] if semantic_event else []),
             {"event": "intent.classified", "intent": intent},
             {"event": "query.rewritten", "applied": rewritten, "query": rewritten_query if rewritten else message},
             {"event": "tool.selected", "tool": tool, "risk": "read-only"},
@@ -566,6 +613,8 @@ class CodeRagAssistant:
             return "没有找到可引用的代码证据。请提供函数名、文件名、报错信息或测试名，以便重新检索。"
         if tool_name == "summarize_function":
             lead = prepared.citations[0]
+            if lead.symbol == lead.path:
+                return f"最相关的代码模块是 `{lead.path}` 第 {lead.start_line}-{lead.end_line} 行。它已作为证据返回；建议结合该文件的导入关系和测试一起阅读。"
             return f"函数/符号 `{lead.symbol}` 位于 `{lead.path}` 第 {lead.start_line}-{lead.end_line} 行。它的实现已作为证据返回；建议结合其调用方和测试一起阅读。"
         if tool_name == "locate_dependencies":
             imports = self._imports_for(prepared.citations[0].path)
